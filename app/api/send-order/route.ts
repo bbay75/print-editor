@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { Resend } from "resend";
+import { supabaseServer } from "@/lib/supabase-server";
 
 export const runtime = "nodejs";
 
@@ -23,13 +24,56 @@ export async function POST(req: Request) {
     const scaledPdf = formData.get("scaledPdf") as File | null;
     const preview = formData.get("preview") as File | null;
 
-    console.log("PREVIEW FILE:", preview);
+    console.log("ORDER FORM DATA:", {
+      name,
+      phone,
+      hasFile: !!file,
+      hasPreview: !!preview,
+      hasScaledPdf: !!scaledPdf,
+    });
 
     if (!name || !phone || !file) {
       return NextResponse.json(
-        { error: "Дутуу мэдээлэл байна" },
+        {
+          error: `Дутуу мэдээлэл байна: name=${!!name}, phone=${!!phone}, file=${!!file}`,
+        },
         { status: 400 },
       );
+    }
+
+    let previewUrl: string | null = null;
+
+    if (preview) {
+      const previewName = `orders/${Date.now()}-preview.png`;
+
+      const { error: uploadError } = await supabaseServer.storage
+        .from("orders")
+        .upload(previewName, preview, {
+          contentType: "image/png",
+          upsert: false,
+        });
+
+      if (!uploadError) {
+        const { data } = supabaseServer.storage
+          .from("orders")
+          .getPublicUrl(previewName);
+
+        previewUrl = data.publicUrl;
+      } else {
+        console.error("PREVIEW UPLOAD ERROR:", uploadError);
+      }
+    }
+
+    const { error: orderInsertError } = await supabaseServer
+      .from("orders")
+      .insert({
+        name: String(name),
+        phone: String(phone),
+        file_url: previewUrl,
+      });
+
+    if (orderInsertError) {
+      console.error("ORDER INSERT ERROR:", orderInsertError);
     }
 
     const attachments: Array<{
@@ -56,14 +100,6 @@ export async function POST(req: Request) {
       });
     }
 
-    console.log(
-      "ATTACHMENTS:",
-      attachments.map((a) => ({
-        filename: a.filename,
-        size: a.content.length,
-      })),
-    );
-
     const result = await resend.emails.send({
       from: "onboarding@resend.dev",
       to: "bbayru75@gmail.com",
@@ -71,6 +107,11 @@ export async function POST(req: Request) {
       html: `
         <p><b>Нэр:</b> ${String(name)}</p>
         <p><b>Утас:</b> ${String(phone)}</p>
+        ${
+          previewUrl
+            ? `<p><b>Preview:</b> <a href="${previewUrl}">Зураг харах</a></p>`
+            : ""
+        }
       `,
       attachments,
     });
@@ -84,7 +125,7 @@ export async function POST(req: Request) {
       );
     }
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, previewUrl });
   } catch (error: any) {
     console.error("SEND ORDER ERROR:", error);
 

@@ -7,6 +7,29 @@ import { randomUUID } from "crypto";
 import { execFile } from "child_process";
 import { promisify } from "util";
 
+function pickRegisteredFontName(fontFamily?: string, fontWeight?: number) {
+  const family = (fontFamily || "").toLowerCase();
+  const isBold = (fontWeight ?? 400) >= 700;
+
+  if (family.includes("inter")) {
+    return isBold ? "inter-bold" : "inter-regular";
+  }
+
+  if (family.includes("oswald")) {
+    return isBold ? "oswald-bold" : "oswald-regular";
+  }
+
+  if (family.includes("caveat")) {
+    return isBold ? "caveat-bold" : "caveat-regular";
+  }
+
+  if (family.includes("marck")) {
+    return "marck-regular";
+  }
+
+  return isBold ? "bold" : "regular";
+}
+
 const execFileAsync = promisify(execFile);
 
 export const runtime = "nodejs";
@@ -27,6 +50,12 @@ type EditorElement = {
   yMm?: number;
   widthMm?: number;
   heightMm?: number;
+
+  pdfLeftPx?: number;
+  pdfTopPx?: number;
+  pdfWidthPx?: number;
+  pdfHeightPx?: number;
+
   rotation: number;
   opacity: number;
   color?: string;
@@ -51,8 +80,11 @@ type ExportPayload = {
     bleedMm: number;
     safeMm: number;
   };
+  surfaceWidthPx: number;
+  surfaceHeightPx: number;
   elements: EditorElement[];
   includeCropMarks?: boolean;
+  preferCmyk?: boolean;
 };
 
 function pxToMm(px: number) {
@@ -75,7 +107,12 @@ function getPdfTextAlign(
   return "left";
 }
 
-function drawCropMarks(doc: any, width: number, height: number, bleed: number) {
+function drawCropMarks(
+  doc: PDFKit.PDFDocument,
+  width: number,
+  height: number,
+  bleed: number,
+) {
   const markLength = 5;
   const offset = 2;
 
@@ -164,7 +201,6 @@ async function dataUrlToBuffer(dataUrl: string) {
     throw new Error("Invalid data URL");
   }
 
-  const meta = dataUrl.slice(0, commaIndex);
   const b64 = dataUrl.slice(commaIndex + 1);
 
   return {
@@ -209,7 +245,6 @@ async function createPdfxDefPs(params: {
     bleedBottomPt,
   } = params;
 
-  // Ghostscript PDF/X definition file
   return `%!
 % Custom PDF/X-1a definition file
 
@@ -250,9 +285,10 @@ async function convertPdfToPdfX1a(
   inputBuffer: Buffer,
   docMeta: ExportPayload["doc"],
 ): Promise<Buffer> {
-  const gsPath =
-    process.env.GHOSTSCRIPT_PATH ||
-    "C:/Program Files/gs/gs10.07.0/bin/gswin64c.exe";
+  const gsPath = process.env.GHOSTSCRIPT_PATH;
+  if (!gsPath) {
+    throw new Error("Ghostscript path not configured");
+  }
 
   const tempDir = os.tmpdir();
   const id = randomUUID();
@@ -274,30 +310,17 @@ async function convertPdfToPdfX1a(
 
   const bleedPt = mmToPt(docMeta.bleedMm);
 
-  // MediaBox = trim size + bleed*2
-  // TrimBox is inset from MediaBox by bleed on all sides
-  const trimLeftPt = bleedPt;
-  const trimRightPt = bleedPt;
-  const trimTopPt = bleedPt;
-  const trimBottomPt = bleedPt;
-
-  // BleedBox = MediaBox in this setup
-  const bleedLeftPt = bleedPt;
-  const bleedRightPt = bleedPt;
-  const bleedTopPt = bleedPt;
-  const bleedBottomPt = bleedPt;
-
   const pdfxDef = await createPdfxDefPs({
     title: "design-x1a.pdf",
     cmykProfilePath,
-    trimLeftPt,
-    trimRightPt,
-    trimTopPt,
-    trimBottomPt,
-    bleedLeftPt,
-    bleedRightPt,
-    bleedTopPt,
-    bleedBottomPt,
+    trimLeftPt: bleedPt,
+    trimRightPt: bleedPt,
+    trimTopPt: bleedPt,
+    trimBottomPt: bleedPt,
+    bleedLeftPt: bleedPt,
+    bleedRightPt: bleedPt,
+    bleedTopPt: bleedPt,
+    bleedBottomPt: bleedPt,
   });
 
   await fs.writeFile(pdfxDefPath, pdfxDef, "utf8");
@@ -326,23 +349,10 @@ async function convertPdfToPdfX1a(
     normalizedInput,
   ];
 
-  console.log("👉 GS PATH:", gsPath);
-  console.log("👉 GS ARGS:", args);
-
   try {
-    const result = await execFileAsync(gsPath, args);
-
-    if (result.stdout) console.log("✅ GS stdout:", result.stdout);
-    if (result.stderr) console.log("⚠️ GS stderr:", result.stderr);
-
+    await execFileAsync(gsPath, args);
     return await fs.readFile(outputPath);
   } catch (err: any) {
-    console.error("❌ GS failed");
-    console.error("code:", err?.code);
-    console.error("stdout:", err?.stdout);
-    console.error("stderr:", err?.stderr);
-    console.error("message:", err?.message);
-
     throw new Error(
       `Ghostscript failed: ${err?.stderr || err?.message || "Unknown GS error"}`,
     );
@@ -358,7 +368,13 @@ async function convertPdfToPdfX1a(
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as ExportPayload;
-    const { doc: docMeta, elements, includeCropMarks } = body;
+    const {
+      doc: docMeta,
+      elements,
+      includeCropMarks,
+      surfaceWidthPx,
+      surfaceHeightPx,
+    } = body;
 
     if (!docMeta || !Array.isArray(elements)) {
       return NextResponse.json(
@@ -383,8 +399,55 @@ export async function POST(req: Request) {
       },
     });
 
-    const chunks: Buffer[] = [];
+    // 🔥 FONT REGISTER (энд)
+    pdf.registerFont(
+      "regular",
+      path.join(process.cwd(), "public/fonts/NotoSans-Regular.ttf"),
+    );
 
+    pdf.registerFont(
+      "bold",
+      path.join(process.cwd(), "public/fonts/NotoSans-Bold.ttf"),
+    );
+
+    pdf.registerFont(
+      "inter-regular",
+      path.join(process.cwd(), "public/fonts/Inter-Regular.ttf"),
+    );
+
+    pdf.registerFont(
+      "inter-bold",
+      path.join(process.cwd(), "public/fonts/Inter-Bold.ttf"),
+    );
+
+    pdf.registerFont(
+      "oswald-regular",
+      path.join(process.cwd(), "public/fonts/Oswald-Regular.ttf"),
+    );
+
+    pdf.registerFont(
+      "oswald-bold",
+      path.join(process.cwd(), "public/fonts/Oswald-Bold.ttf"),
+    );
+
+    pdf.registerFont(
+      "caveat-regular",
+      path.join(process.cwd(), "public/fonts/Caveat-Regular.ttf"),
+    );
+
+    pdf.registerFont(
+      "caveat-bold",
+      path.join(process.cwd(), "public/fonts/Caveat-Bold.ttf"),
+    );
+
+    pdf.registerFont(
+      "marck-regular",
+      path.join(process.cwd(), "public/fonts/MarckScript-Regular.ttf"),
+    );
+
+    pdf.font("regular");
+
+    const chunks: Buffer[] = [];
     pdf.on("data", (chunk) =>
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)),
     );
@@ -393,69 +456,126 @@ export async function POST(req: Request) {
       pdf.on("end", () => resolve(Buffer.concat(chunks)));
       pdf.on("error", reject);
     });
+    const fontCache = new Map<string, Buffer>();
 
+    async function getFontBuffer(fontPath: string) {
+      const cached = fontCache.get(fontPath);
+      if (cached) return cached;
+
+      const buf = await fs.readFile(fontPath);
+      fontCache.set(fontPath, buf);
+      return buf;
+    }
     for (const el of elements) {
-      const x = mmToPt(
-        docMeta.bleedMm + (el.xMm !== undefined ? el.xMm : pxToMm(el.x)),
-      );
-      const y = mmToPt(
-        docMeta.bleedMm + (el.yMm !== undefined ? el.yMm : pxToMm(el.y)),
-      );
-      const width = mmToPt(
-        el.widthMm !== undefined ? el.widthMm : pxToMm(el.width),
-      );
-      const height = mmToPt(
-        el.heightMm !== undefined ? el.heightMm : pxToMm(el.height),
-      );
+      const bleedPt = mmToPt(docMeta.bleedMm);
 
+      const x =
+        bleedPt +
+        ((el.pdfLeftPx ?? 0) / Math.max(surfaceWidthPx, 1)) *
+          mmToPt(docMeta.widthMm);
+
+      const y =
+        bleedPt +
+        ((el.pdfTopPx ?? 0) / Math.max(surfaceHeightPx, 1)) *
+          mmToPt(docMeta.heightMm);
+
+      const width =
+        ((el.pdfWidthPx ?? 0) / Math.max(surfaceWidthPx, 1)) *
+        mmToPt(docMeta.widthMm);
+
+      const height =
+        ((el.pdfHeightPx ?? 0) / Math.max(surfaceHeightPx, 1)) *
+        mmToPt(docMeta.heightMm);
       if (el.type === "text" && el.text) {
-        const fontFile = pickFontFile(el.fontFamily, el.fontWeight);
-        const fontBuffer = await fs.readFile(fontFile);
+        pdf.save();
+        pdf.opacity(el.opacity ?? 1);
+
         const fontSizePt = fontPxToPt(
           (el.fontSize ?? 40) * (el.fontScale ?? 1),
         );
+
+        const fontName = pickRegisteredFontName(el.fontFamily, el.fontWeight);
         const align = getPdfTextAlign(el.textAlign);
 
-        pdf.save();
+        pdf.font(fontName);
         pdf.fillColor(el.color ?? "#000000");
-        pdf.font(fontBuffer);
         pdf.fontSize(fontSizePt);
-        pdf.opacity(1);
 
-        pdf.text(el.text, x, y, {
+        // PDFKit дээр script font-ууд browser-оос арай доош суудаг
+        let textYOffset = fontSizePt * 0.12;
+
+        if (fontName.includes("caveat") || fontName.includes("marck")) {
+          textYOffset = fontSizePt * 0.09;
+        }
+
+        const textY = y - textYOffset;
+
+        pdf.text(el.text, x, textY, {
           width,
           align,
-          lineGap: Math.max(0, ((el.lineHeight ?? 1.2) - 1) * fontSizePt),
+          lineGap: ((el.lineHeight ?? 1.2) - 1) * fontSizePt,
         });
 
         pdf.restore();
       }
-
       if (el.type === "line") {
-        const thickness = Math.max(
-          0.2,
-          mmToPt(el.heightMm ?? pxToMm(el.lineThickness ?? el.height ?? 6)),
-        );
-
         pdf.save();
-        pdf.strokeColor(el.color ?? "#000000");
         pdf.opacity(el.opacity ?? 1);
-        pdf.lineWidth(thickness);
+
+        const thickness =
+          el.lineThickness && el.lineThickness > 0
+            ? mmToPt(pxToMm(el.lineThickness))
+            : Math.max(0.5, height);
+
+        const lineY = y + thickness * 0.5 + 0.2;
 
         pdf
-          .moveTo(x, y + height / 2)
-          .lineTo(x + width, y + height / 2)
+          .lineWidth(thickness)
+          .strokeColor(el.color ?? "#ffffff")
+          .moveTo(x, lineY)
+          .lineTo(x + width, lineY)
           .stroke();
 
         pdf.restore();
       }
-
       if (el.type === "logo" && el.src) {
         try {
           const { buffer } = await dataUrlToBuffer(el.src);
+
           pdf.save();
           pdf.opacity(el.opacity ?? 1);
-          pdf.image(buffer, x, y, { width, height });
+
+          if (el.name === "AI BG") {
+            // 🔥 OBJECT-COVER яг дуурайлгана
+            pdf.save();
+            pdf.opacity(el.opacity ?? 1);
+
+            if (el.name === "AI BG") {
+              pdf.rect(x, y, width, height).clip();
+
+              pdf.image(buffer, x, y, {
+                cover: [width, height],
+                align: "center",
+                valign: "center",
+              });
+            } else {
+              pdf.image(buffer, x, y, {
+                fit: [width, height],
+                align: "center",
+                valign: "center",
+              });
+            }
+
+            pdf.restore();
+          } else {
+            // LOGO
+            pdf.image(buffer, x, y, {
+              fit: [width, height],
+              align: "center",
+              valign: "center",
+            });
+          }
+
           pdf.restore();
         } catch (e) {
           console.warn("Logo draw skipped:", e);
@@ -470,13 +590,27 @@ export async function POST(req: Request) {
     pdf.end();
 
     const rgbPdfBuffer = await done;
-    const pdfxBuffer = await convertPdfToPdfX1a(rgbPdfBuffer, docMeta);
 
-    return new Response(new Uint8Array(pdfxBuffer), {
+    let finalPdfBuffer = rgbPdfBuffer;
+    let fileName = "design-rgb-fallback.pdf";
+    let exportMode = "rgb-fallback";
+
+    if (body.preferCmyk) {
+      try {
+        finalPdfBuffer = await convertPdfToPdfX1a(rgbPdfBuffer, docMeta);
+        fileName = "design-pdfx1a.pdf";
+        exportMode = "pdfx1a-cmyk";
+      } catch (error) {
+        console.warn("CMYK conversion skipped, using PDFKit fallback:", error);
+      }
+    }
+
+    return new Response(new Uint8Array(finalPdfBuffer), {
       status: 200,
       headers: {
         "Content-Type": "application/pdf",
-        "Content-Disposition": 'attachment; filename="design-pdfx1a.pdf"',
+        "Content-Disposition": `attachment; filename="${fileName}"`,
+        "X-Export-Mode": exportMode,
       },
     });
   } catch (error) {

@@ -7,6 +7,7 @@ import {
   Marck_Script,
   Caveat,
 } from "next/font/google";
+import ToasterProvider from "../components/ToasterProvider";
 
 const inter = Inter({
   subsets: ["latin", "cyrillic"],
@@ -41,14 +42,15 @@ export const metadata: Metadata = {
 
 export default function RootLayout({
   children,
-}: {
+}: Readonly<{
   children: React.ReactNode;
-}) {
+}>) {
   return (
     <html lang="en">
       <body
         className={`${inter.variable} ${notoSans.variable} ${oswald.variable} ${marckScript.variable} ${caveat.variable}`}
       >
+        <ToasterProvider />
         {children}
       </body>
     </html>

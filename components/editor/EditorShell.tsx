@@ -8,7 +8,36 @@ import React, {
   useState,
 } from "react";
 import { toPng } from "html-to-image";
-import { jsPDF } from "jspdf";
+import toast from "react-hot-toast";
+import type { EditorElement, ElementType, TextRole } from "./editor-types";
+import { supabase } from "@/lib/supabase";
+import { buildAiElements } from "./build-ai-elements";
+import { cloneElements, sameElements } from "./editor-history";
+import { checkAccess, registerUser } from "@/lib/api-client";
+
+import {
+  getRoleLayoutConfig,
+  fitFontSizeSmart,
+  measureTextHeightForFont,
+} from "./editor-typography";
+import {
+  SNAP_DISTANCE,
+  GUIDE_COLOR,
+  EXPORT_DPI,
+  clamp,
+  makeId,
+  fitFontSize,
+  mmToPx,
+  pxToMm,
+  getPreviewScale,
+  parseMm,
+} from "./editor-utils";
+import {
+  getLayoutPosition,
+  getPositionXY,
+  type LayoutPosition,
+  type LayoutType,
+} from "./layout-engine";
 import {
   Undo2,
   Redo2,
@@ -28,46 +57,6 @@ import {
   Bold,
   type LucideIcon,
 } from "lucide-react";
-
-type ElementType = "text" | "logo" | "line";
-type TextRole = "primary" | "secondary" | "support" | "contact";
-
-type EditorElement = {
-  id: string;
-  type: ElementType;
-  name: string;
-  role?: TextRole;
-
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-
-  xMm?: number;
-  yMm?: number;
-  widthMm?: number;
-  heightMm?: number;
-
-  rotation: number;
-  opacity: number;
-  color?: string;
-  text?: string;
-  fontSize?: number;
-  fontScale?: number;
-  fontWeight?: number;
-  fontFamily?: string;
-  src?: string;
-  borderRadius?: number;
-  lineThickness?: number;
-  aspectRatio?: number;
-  textAlign?: "left" | "center" | "right";
-  lineHeight?: number;
-  textShadow?: string;
-};
-
-const SNAP_DISTANCE = 8;
-const GUIDE_COLOR = "#2563eb";
-const EXPORT_DPI = 300;
 
 const FONT_OPTIONS = [
   {
@@ -96,91 +85,6 @@ const FONT_OPTIONS = [
     preview: "var(--font-caveat), cursive",
   },
 ];
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(Math.max(value, min), max);
-}
-
-function makeId() {
-  return Math.random().toString(36).slice(2, 10);
-}
-
-function fitFontSize(text: string) {
-  const length = Math.max(text.trim().length, 8);
-
-  if (length <= 10) return 80;
-  if (length <= 18) return 64;
-  if (length <= 28) return 54;
-  if (length <= 40) return 46;
-  if (length <= 55) return 38;
-  if (length <= 70) return 32;
-  return 28;
-}
-
-function mmToPx(mm: number) {
-  return mm * 3.7795;
-}
-
-function pxToMm(px: number) {
-  return px * 0.264583;
-}
-
-async function initPdfFonts(pdf: jsPDF) {
-  const regularRes = await fetch("/fonts/NotoSans-Regular.ttf");
-  const boldRes = await fetch("/fonts/NotoSans-Bold.ttf");
-
-  const regularBuffer = await regularRes.arrayBuffer();
-  const boldBuffer = await boldRes.arrayBuffer();
-
-  const regularBinary = arrayBufferToBinaryString(regularBuffer);
-  const boldBinary = arrayBufferToBinaryString(boldBuffer);
-
-  pdf.addFileToVFS("NotoSans-Regular.ttf", regularBinary);
-  pdf.addFont("NotoSans-Regular.ttf", "NotoSans", "normal");
-
-  pdf.addFileToVFS("NotoSans-Bold.ttf", boldBinary);
-  pdf.addFont("NotoSans-Bold.ttf", "NotoSans", "bold");
-}
-
-function arrayBufferToBinaryString(buffer: ArrayBuffer) {
-  let binary = "";
-  const bytes = new Uint8Array(buffer);
-  const chunkSize = 0x8000;
-
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const subarray = bytes.subarray(i, i + chunkSize);
-    binary += String.fromCharCode(...subarray);
-  }
-
-  return binary;
-}
-
-function getPreviewScale(widthMm: number, heightMm: number) {
-  const maxPreviewWidthPx = 900;
-  const maxPreviewHeightPx = 700;
-
-  const widthPx = mmToPx(widthMm);
-  const heightPx = mmToPx(heightMm);
-
-  return Math.min(
-    maxPreviewWidthPx / widthPx,
-    maxPreviewHeightPx / heightPx,
-    1,
-  );
-}
-
-function fontPxToPt(px: number) {
-  return px * 0.75;
-}
-
-function getPdfTextAlign(
-  align?: "left" | "center" | "right",
-): "left" | "center" | "right" {
-  if (align === "center") return "center";
-  if (align === "right") return "right";
-  return "left";
-}
-
 function createTextElement(
   canvasWidth: number,
   text = "Шинэ текст",
@@ -233,119 +137,6 @@ function createLineElement(): EditorElement {
     lineThickness: 6,
     borderRadius: 999,
   };
-}
-
-function getRoleLayoutConfig(
-  role: TextRole,
-  canvasWidth: number,
-  canvasHeight: number,
-) {
-  const shortSide = Math.min(canvasWidth, canvasHeight);
-
-  if (role === "primary") {
-    return {
-      boxHeight: canvasHeight * 0.22,
-      gap: canvasHeight * 0.018,
-      minFont: shortSide * 0.07,
-      maxFont: shortSide * 0.2,
-      lineHeight: 0.98,
-      fontWeight: 800,
-    };
-  }
-
-  if (role === "secondary") {
-    return {
-      boxHeight: canvasHeight * 0.1,
-      gap: canvasHeight * 0.014,
-      minFont: shortSide * 0.03,
-      maxFont: shortSide * 0.09,
-      lineHeight: 1.08,
-      fontWeight: 600,
-    };
-  }
-
-  if (role === "contact") {
-    return {
-      boxHeight: canvasHeight * 0.07,
-      gap: canvasHeight * 0.01,
-      minFont: shortSide * 0.024,
-      maxFont: shortSide * 0.06,
-      lineHeight: 1.05,
-      fontWeight: 700,
-    };
-  }
-
-  return {
-    boxHeight: canvasHeight * 0.08,
-    gap: canvasHeight * 0.012,
-    minFont: shortSide * 0.026,
-    maxFont: shortSide * 0.07,
-    lineHeight: 1.08,
-    fontWeight: 600,
-  };
-}
-
-function fitFontSizeSmart(
-  text: string,
-  role: TextRole,
-  boxWidth: number,
-  boxHeight: number,
-  canvasWidth: number,
-  canvasHeight: number,
-) {
-  const cfg = getRoleLayoutConfig(role, canvasWidth, canvasHeight);
-  const safeText = (text || "").trim() || "Text";
-  const lines = safeText.split("\n");
-  const longest = Math.max(...lines.map((line) => line.length), 6);
-
-  const byWidth = boxWidth / Math.max(longest * 0.5, 4);
-  const byHeight =
-    boxHeight / Math.max(lines.length * (cfg.lineHeight || 1.1), 1);
-
-  return Math.round(
-    clamp(Math.min(byWidth, byHeight), cfg.minFont, cfg.maxFont),
-  );
-}
-
-function measureTextHeightForFont(
-  text: string,
-  widthPx: number,
-  fontSizePx: number,
-  fontWeight: number,
-  lineHeight: number,
-  fontFamily?: string,
-) {
-  if (typeof document === "undefined") return fontSizePx * lineHeight;
-
-  const el = document.createElement("div");
-  el.style.position = "fixed";
-  el.style.left = "-99999px";
-  el.style.top = "-99999px";
-  el.style.visibility = "hidden";
-  el.style.pointerEvents = "none";
-  el.style.width = `${Math.max(20, widthPx)}px`;
-  el.style.fontSize = `${fontSizePx}px`;
-  el.style.fontWeight = String(fontWeight);
-  el.style.lineHeight = String(lineHeight);
-
-  // 🔥 ЭНЭ ХАМГИЙН ЧУХАЛ
-  el.style.fontFamily = fontFamily || "Inter, sans-serif";
-
-  el.style.whiteSpace = "pre-wrap";
-  el.style.wordBreak = "break-word";
-  el.style.overflowWrap = "anywhere";
-  el.style.textAlign = "left";
-  el.style.padding = "0";
-  el.style.margin = "0";
-  el.style.boxSizing = "border-box";
-
-  el.textContent = text || "";
-
-  document.body.appendChild(el);
-  const h = el.scrollHeight;
-  document.body.removeChild(el);
-
-  return h;
 }
 
 function getSafeAreaFitMaxFontSize({
@@ -867,7 +658,9 @@ function CanvasItem({
   };
 
   const handlePointerUp = () => {
-    if (dragRef.current?.changed) onCommit();
+    if (dragRef.current?.changed) {
+      onCommit();
+    }
     dragRef.current = null;
     onGuidesChange({ vertical: null, horizontal: null });
     onDragEnd();
@@ -1017,6 +810,7 @@ function CanvasItem({
 
   return (
     <div
+      data-element-id={element.id}
       onPointerDown={handleBoxPointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
@@ -1125,7 +919,9 @@ function CanvasItem({
           src={element.src}
           alt={element.name}
           className={`h-full w-full ${
-            element.name === "AI BG" ? "object-cover" : "object-contain"
+            element.name === "AI BG"
+              ? "object-cover scale-[1.03]"
+              : "object-contain"
           }`}
           style={{
             borderRadius: element.borderRadius,
@@ -1161,23 +957,25 @@ function CanvasItem({
     </div>
   );
 }
-
-const parseMm = (value: string) => {
-  const v = String(value).toLowerCase().trim();
-
-  if (v.endsWith("cm")) return Number(v.replace("cm", "")) * 10;
-  if (v.endsWith("m")) return Number(v.replace("m", "")) * 1000;
-
-  return Number(v);
-};
-
 export default function EditorShell() {
-  const [doc, setDoc] = useState({
-    widthMm: 3500,
-    heightMm: 1500,
+  const [doc, setDoc] = useState<{
+    widthMm: string | number;
+    heightMm: string | number;
+    bleedMm: number;
+    safeMm: number;
+  }>({
+    widthMm: "",
+    heightMm: "",
     bleedMm: 5,
     safeMm: 20,
   });
+
+  const widthInputRef = useRef<HTMLInputElement | null>(null);
+  const heightInputRef = useRef<HTMLInputElement | null>(null);
+  const [sizeError, setSizeError] = useState<{
+    width?: string;
+    height?: string;
+  }>({});
 
   const [elements, setElements] = useState<EditorElement[]>([]);
   const elementsRef = useRef<EditorElement[]>([]);
@@ -1192,8 +990,51 @@ export default function EditorShell() {
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [aiPrompt, setAiPrompt] = useState("");
+
+  const [generateCount, setGenerateCount] = useState(0);
+  const [isRegistered, setIsRegistered] = useState(false);
+  const MAX_FREE = 3;
+  const [showRegister, setShowRegister] = useState(false);
+  const [showAdminModal, setShowAdminModal] = useState(false);
+  const [isKiosk, setIsKiosk] = useState(false);
+  const [accessLimit, setAccessLimit] = useState<number | null>(null);
+  const [accessUsed, setAccessUsed] = useState<number | null>(null);
+  const lastRemainingRef = useRef<number | null>(null);
+  const [creditFlash, setCreditFlash] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setIsKiosk(params.get("kiosk") === "1");
+  }, []);
+  useEffect(() => {
+    const registered = localStorage.getItem("print_editor_user_registered");
+
+    if (registered === "1") {
+      setShowRegister(false);
+    }
+  }, []);
+  useEffect(() => {
+    const registered =
+      localStorage.getItem("print_editor_user_registered") === "1";
+
+    setIsRegistered(registered);
+  }, []);
+  useEffect(() => {
+    if (!isRegistered && generateCount >= 3) {
+      setShowRegister(true);
+    }
+  }, [generateCount, isRegistered]);
+
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [registerName, setRegisterName] = useState("");
+  const [registerPhone, setRegisterPhone] = useState("");
+
   const [scale, setScale] = useState(() => getPreviewScale(2000, 1000));
   const [status, setStatus] = useState("Бэлэн");
+  const [isAiLoading, setIsAiLoading] = useState(false);
+  const [aiTips, setAiTips] = useState<string[]>([]);
+  const [layoutType, setLayoutType] = useState<LayoutType>("hero");
   const [guides, setGuides] = useState<{
     vertical: number | null;
     horizontal: number | null;
@@ -1203,8 +1044,7 @@ export default function EditorShell() {
   });
 
   const [orderOpen, setOrderOpen] = useState(false);
-  const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
+  const [isSendingOrder, setIsSendingOrder] = useState(false);
   const [isDraggingElement, setIsDraggingElement] = useState(false);
 
   const [showGuides, setShowGuides] = useState(true);
@@ -1222,7 +1062,58 @@ export default function EditorShell() {
   const logoInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
+    const saved = Number(
+      localStorage.getItem("print_editor_ai_generate_count") || 0,
+    );
+    setGenerateCount(saved);
+  }, []);
+  useEffect(() => {
+    let timer: NodeJS.Timeout | null = null;
+
+    const loadAccess = async () => {
+      const registered =
+        localStorage.getItem("print_editor_user_registered") === "1";
+      const phone = localStorage.getItem("user_phone");
+
+      if (!registered || !phone) return;
+
+      const data = await checkAccess(phone);
+
+      const limit = data.limit ?? 3;
+      const used = data.used ?? 0;
+      const remaining = Math.max(0, limit - used);
+
+      const prevRemaining = lastRemainingRef.current;
+
+      if (prevRemaining !== null && remaining > prevRemaining) {
+        toast.success(`AI эрх нэмэгдлээ. Үлдсэн: ${remaining}`);
+
+        setCreditFlash(true);
+        setTimeout(() => {
+          setCreditFlash(false);
+        }, 1500);
+      }
+
+      lastRemainingRef.current = remaining;
+
+      setAccessLimit(limit);
+      setAccessUsed(used);
+    };
+
+    loadAccess();
+
+    timer = setInterval(loadAccess, 10000);
+
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, []);
+  useEffect(() => {
     elementsRef.current = JSON.parse(JSON.stringify(elements));
+
+    if (elements.length > 0) {
+      localStorage.setItem("print_editor_elements", JSON.stringify(elements));
+    }
   }, [elements]);
 
   useEffect(() => {
@@ -1232,12 +1123,6 @@ export default function EditorShell() {
   useEffect(() => {
     futureRef.current = future;
   }, [future]);
-
-  const cloneElements = (items: EditorElement[]) =>
-    JSON.parse(JSON.stringify(items)) as EditorElement[];
-
-  const sameElements = (a: EditorElement[], b: EditorElement[]) =>
-    JSON.stringify(a) === JSON.stringify(b);
 
   const applyElements = (next: EditorElement[]) => {
     const safeNext = cloneElements(Array.isArray(next) ? next : []);
@@ -1344,8 +1229,12 @@ export default function EditorShell() {
     [elements, selectedId],
   );
 
-  const previewCanvasWidth = mmToPx(Number(doc.widthMm) || 3500);
-  const previewCanvasHeight = mmToPx(Number(doc.heightMm) || 1500);
+  const hasValidDocSize = Number(doc.widthMm) > 0 && Number(doc.heightMm) > 0;
+
+  const previewCanvasWidth = hasValidDocSize ? mmToPx(Number(doc.widthMm)) : 0;
+  const previewCanvasHeight = hasValidDocSize
+    ? mmToPx(Number(doc.heightMm))
+    : 0;
   const previewBleed = mmToPx(Number(doc.bleedMm) || 0);
   const previewSafe = mmToPx(Number(doc.safeMm) || 0);
   const previewTotalWidth = previewCanvasWidth + previewBleed * 2;
@@ -1439,7 +1328,10 @@ export default function EditorShell() {
 
   const updateSelected = (patch: Partial<EditorElement>) => {
     if (!selectedId) return;
+
+    captureHistoryStart(); // 🔥 START
     patchElement(selectedId, patch);
+    commitHistory(); // 🔥 END
   };
 
   const beginSelectedEdit = () => {
@@ -1529,7 +1421,9 @@ export default function EditorShell() {
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
   }, [selectedId]);
-
+  function looksLikeContact(text: string) {
+    return /(\+?\d[\d\s-]{5,})/.test(text);
+  }
   const extractClientFallback = (prompt: string) => {
     const lines = prompt
       .split("\n")
@@ -1586,12 +1480,127 @@ export default function EditorShell() {
 
     return { headline, subtitle, cta };
   };
+  const getDeviceId = () => {
+    let id = localStorage.getItem("print_editor_device_id");
+
+    if (!id) {
+      id = crypto.randomUUID();
+      localStorage.setItem("print_editor_device_id", id);
+    }
+
+    return id;
+  };
 
   const runAiText = async () => {
-    if (!aiPrompt.trim()) return;
+    const userPhone = localStorage.getItem("user_phone");
+    // ✅ 1. Бүртгэлтэй хэрэглэгч бол Supabase users credit шалгана
+    if (isRegistered && userPhone) {
+      const accessRes = await fetch("/api/check-access", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ phone: userPhone }),
+      });
+
+      const accessData = await accessRes.json();
+      setAccessLimit(accessData.limit ?? 3);
+      setAccessUsed(accessData.used ?? 0);
+      if (!accessData.access) {
+        setShowAdminModal(true);
+        toast.error("Таны AI эрх дууссан байна.");
+        return;
+      }
+    }
+    // ✅ 2. Бүртгэлгүй хэрэглэгч бол local count шалгана
+    if (!isRegistered && generateCount >= MAX_FREE) {
+      toast.error("Үнэгүй ашиглалт дууслаа. Бүртгүүлээд үргэлжлүүлээрэй 🚀");
+      setShowRegister(true);
+      return;
+    }
+    console.log("runAiText clicked", {
+      width: doc.widthMm,
+      height: doc.heightMm,
+    });
+    const widthValue = String(doc.widthMm ?? "").trim();
+    const heightValue = String(doc.heightMm ?? "").trim();
+    const errors: { width?: string; height?: string } = {};
+
+    if (!widthValue) {
+      errors.width = "Өргөний хэмжээг оруулна уу";
+    }
+
+    if (!heightValue) {
+      errors.height = "Өндрийн хэмжээг оруулна уу";
+    }
+
+    if (errors.width || errors.height) {
+      setSizeError(errors);
+
+      toast.error(
+        !widthValue && !heightValue
+          ? "Өргөн, өндрийн хэмжээгээ оруулна уу"
+          : !widthValue
+            ? "Өргөний хэмжээг оруулна уу"
+            : "Өндрийн хэмжээг оруулна уу",
+      );
+
+      const target = !widthValue
+        ? widthInputRef.current
+        : heightInputRef.current;
+
+      target?.scrollIntoView({ behavior: "smooth", block: "center" });
+
+      setTimeout(() => {
+        target?.focus();
+      }, 150);
+      return;
+    }
+
+    setSizeError({});
+
+    const widthMm = parseMm(widthValue);
+    const heightMm = parseMm(heightValue);
+
+    if (!Number.isFinite(widthMm) || widthMm <= 0) {
+      toast.error("Өргөний хэмжээ буруу байна.");
+      widthInputRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+      setTimeout(() => {
+        widthInputRef.current?.focus();
+        widthInputRef.current?.select();
+      }, 150);
+      return;
+    }
+
+    if (!Number.isFinite(heightMm) || heightMm <= 0) {
+      toast.error("Өндрийн хэмжээ буруу байна.");
+      heightInputRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+      setTimeout(() => {
+        heightInputRef.current?.focus();
+        heightInputRef.current?.select();
+      }, 150);
+      return;
+    }
+
+    if (!aiPrompt.trim()) {
+      toast.error("AI prompt оруулна уу.");
+      return;
+    }
 
     try {
+      setIsAiLoading(true);
       setStatus("AI дизайн үүсгэж байна...");
+
+      surfaceRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
 
       const res = await fetch("/api/ai/text", {
         method: "POST",
@@ -1600,231 +1609,37 @@ export default function EditorShell() {
         },
         body: JSON.stringify({
           prompt: aiPrompt,
-          widthMm: doc.widthMm,
-          heightMm: doc.heightMm,
+          widthMm,
+          heightMm,
         }),
       });
 
       const data = await res.json();
+      setAiTips(Array.isArray(data.tips) ? data.tips : []);
+      const nextLayoutType = layoutType;
 
+      setLayoutType(nextLayoutType);
       if (!res.ok) {
         alert(data.error || "AI алдаа гарлаа");
+        setAiTips([]);
         setStatus("AI алдаа");
         return;
       }
 
-      const apiLayout = data.layout ?? {};
-      const fallback = extractClientFallback(aiPrompt);
+      const nextElements = buildAiElements({
+        data,
+        widthMm,
+        heightMm,
+        previewCanvasWidth,
+        previewCanvasHeight,
+        previewSafe,
+        layoutType: nextLayoutType,
+      }) as EditorElement[];
 
-      const cleanHex = (value: unknown, fallbackColor: string) => {
-        if (typeof value !== "string") return fallbackColor;
-        const v = value.trim();
-        return /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v) ? v : fallbackColor;
-      };
-
-      const headlineColor = cleanHex(apiLayout.headlineColor, "#f8fafc");
-      const subtitleColor = cleanHex(apiLayout.subtitleColor, headlineColor);
-      const ctaColor = cleanHex(apiLayout.ctaColor, headlineColor);
-
-      const removeStyleWords = (text: string) => {
-        return text
-          .replace(
-            /\b(luxury|minimal|minimalist|premium|modern|elegant|style)\b/gi,
-            "",
-          )
-          .replace(/\s{2,}/g, " ")
-          .replace(/[.,;:]+\s*$/g, "")
-          .trim();
-      };
-
-      const extractPhone = (text: string) => {
-        const match = text.match(/(\+?\d[\d\s-]{5,})/);
-        return match ? match[1].trim() : "";
-      };
-
-      const removePhoneLine = (text: string) => {
-        return text
-          .replace(/утас\s*[:：]?\s*\+?\d[\d\s-]{5,}/gi, "")
-          .replace(/\+?\d[\d\s-]{5,}/g, "")
-          .replace(/\s{2,}/g, " ")
-          .replace(/[•*·]\s*[•*·]+/g, " • ")
-          .replace(/[.,;:]+\s*$/g, "")
-          .trim();
-      };
-
-      const _headline = removeStyleWords(
-        String(apiLayout.headline || fallback.headline || "").trim(),
-      );
-      const _rawSubtitle = removeStyleWords(
-        String(apiLayout.subtitle || fallback.subtitle || "").trim(),
-      );
-      const _rawCta = removeStyleWords(
-        String(apiLayout.cta || fallback.cta || "").trim(),
-      );
-
-      const _subtitle = removePhoneLine(_rawSubtitle);
-      const phoneValue =
-        extractPhone(_rawCta) ||
-        extractPhone(_rawSubtitle) ||
-        extractPhone(aiPrompt);
-      const _cta = phoneValue ? `Утас: ${phoneValue}` : "";
-
-      void _headline;
-      void _subtitle;
-      void _cta;
-
-      const nextElements: EditorElement[] = [];
-
-      if (data.image) {
-        nextElements.push({
-          id: makeId(),
-          type: "logo",
-          name: "AI BG",
-          x: 0,
-          y: 0,
-          width: previewCanvasWidth,
-          height: previewCanvasHeight,
-          xMm: 0,
-          yMm: 0,
-          widthMm: doc.widthMm,
-          heightMm: doc.heightMm,
-          rotation: 0,
-          opacity: 1,
-          src: data.image,
-          borderRadius: 0,
-          aspectRatio: previewCanvasWidth / previewCanvasHeight,
-        });
-      }
-
-      const safeLeft = previewCanvasWidth * 0.18;
-      const safeWidth = previewCanvasWidth * 0.64;
-
-      const layoutType: "center" | "left" | "stack" = (
-        ["center", "left", "stack"] as const
-      )[Math.floor(Math.random() * 3)];
-
-      const texts: any[] = Array.isArray(data.texts) ? data.texts : [];
-
-      const totalHeight = texts.reduce((sum, t: any) => {
-        const sourceRole =
-          t.role === "headline" || t.role === "cta" ? t.role : "line";
-
-        const mappedRole: TextRole =
-          sourceRole === "headline"
-            ? "primary"
-            : sourceRole === "cta"
-              ? "contact"
-              : "secondary";
-
-        const cfg = getRoleLayoutConfig(
-          mappedRole,
-          previewCanvasWidth,
-          previewCanvasHeight,
-        );
-
-        return sum + cfg.boxHeight + cfg.gap;
-      }, 0);
-
-      let currentY =
-        layoutType === "stack"
-          ? (previewCanvasHeight - totalHeight) / 2 - previewCanvasHeight * 0.01
-          : layoutType === "left"
-            ? (previewCanvasHeight - totalHeight) / 2 -
-              previewCanvasHeight * 0.02
-            : (previewCanvasHeight - totalHeight) / 2 -
-              previewCanvasHeight * 0.03;
-
-      texts.forEach((t: any) => {
-        const sourceRole =
-          t.role === "headline" || t.role === "cta" ? t.role : "line";
-
-        const mappedRole: TextRole =
-          sourceRole === "headline"
-            ? "primary"
-            : sourceRole === "cta"
-              ? "contact"
-              : "secondary";
-
-        const rawText = String(t.text || "").trim();
-        if (!rawText) return;
-
-        const cfg = getRoleLayoutConfig(
-          mappedRole,
-          previewCanvasWidth,
-          previewCanvasHeight,
-        );
-
-        const boxHeight = cfg.boxHeight;
-        const gap = cfg.gap;
-
-        const safeFontSize = fitFontSizeSmart(
-          rawText,
-          mappedRole,
-          safeWidth,
-          boxHeight,
-          previewCanvasWidth,
-          previewCanvasHeight,
-        );
-
-        const textX =
-          layoutType === "left"
-            ? safeLeft + previewCanvasWidth * 0.009
-            : layoutType === "stack"
-              ? previewCanvasWidth / 2 - safeWidth / 2
-              : safeLeft;
-
-        const textY =
-          mappedRole === "primary"
-            ? currentY - previewCanvasHeight * 0.015
-            : currentY;
-
-        const textAlign: "left" | "center" | "right" =
-          layoutType === "left" ? "left" : "center";
-
-        nextElements.push({
-          id: makeId(),
-          type: "text",
-          name:
-            mappedRole === "primary"
-              ? "Primary"
-              : mappedRole === "contact"
-                ? "Contact"
-                : mappedRole === "secondary"
-                  ? "Secondary"
-                  : "Support",
-          role: mappedRole,
-          text: rawText,
-          x: textX,
-          y: textY,
-          xMm: pxToMm(textX),
-          yMm: pxToMm(textY),
-          width: safeWidth,
-          height: boxHeight,
-          widthMm: pxToMm(safeWidth),
-          heightMm: pxToMm(boxHeight),
-          rotation: 0,
-          opacity: 1,
-          color:
-            typeof t.color === "string" && t.color.trim()
-              ? t.color.trim()
-              : mappedRole === "primary"
-                ? headlineColor
-                : mappedRole === "contact"
-                  ? ctaColor
-                  : subtitleColor,
-          fontSize: safeFontSize,
-          fontScale: 1,
-          fontWeight: cfg.fontWeight,
-          fontFamily: "var(--font-inter), Inter, sans-serif",
-          textAlign,
-          lineHeight: cfg.lineHeight,
-          borderRadius: 0,
-          textShadow: "0 2px 8px rgba(0,0,0,0.18)",
-        });
-
-        currentY +=
-          layoutType === "stack" ? boxHeight + gap * 1.35 : boxHeight + gap;
-      });
+      const safeLeft = previewSafe;
+      const safeTop = previewSafe;
+      const safeRight = previewCanvasWidth - previewSafe;
+      const safeBottom = previewCanvasHeight - previewSafe;
 
       const safeElements = Array.isArray(elementsRef.current)
         ? elementsRef.current
@@ -1833,22 +1648,357 @@ export default function EditorShell() {
       const userLogos = safeElements.filter(
         (e) => e.type === "logo" && e.name !== "AI BG",
       );
+
       const bg = nextElements.find((e) => e.name === "AI BG");
       const textEls = nextElements.filter((e) => e.name !== "AI BG");
+
       const next = bg
         ? [bg, ...textEls, ...userLogos]
         : [...textEls, ...userLogos];
 
+      next.forEach((el) => {
+        if (el.name === "AI BG") return;
+        if (!el.width || !el.height) return;
+
+        if (el.x < safeLeft) el.x = safeLeft;
+        if (el.x + el.width > safeRight) {
+          el.x = safeRight - el.width;
+        }
+
+        if (el.y < safeTop) el.y = safeTop;
+        if (el.y + el.height > safeBottom) {
+          el.y = safeBottom - el.height;
+        }
+
+        el.xMm = pxToMm(el.x);
+        el.yMm = pxToMm(el.y);
+      });
+
       pushHistory(next);
       setSelectedId(textEls[0]?.id ?? userLogos[0]?.id ?? null);
       setStatus("AI дизайн бэлэн");
+
+      if (!isRegistered) {
+        const deviceId = getDeviceId();
+
+        const usageRes = await fetch("/api/free-usage", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ deviceId }),
+        });
+
+        const usageData = await usageRes.json();
+
+        // ❗ ЭНЭ Л ЧУХАЛ
+        const usedCount = usageData.used_count;
+
+        setGenerateCount((prev) => Math.max(prev, usedCount));
+
+        localStorage.setItem(
+          "print_editor_ai_generate_count",
+          String(usedCount),
+        );
+
+        toast.success(`Үлдсэн: ${Math.max(0, MAX_FREE - usedCount)} удаа`);
+      }
+
+      // ✅ зөвхөн бүртгэлтэй хэрэглэгч дээр credit хасна
+      const registeredPhone = localStorage.getItem("user_phone");
+      const registeredNow =
+        localStorage.getItem("print_editor_user_registered") === "1";
+      if (registeredNow && registeredPhone) {
+        const creditRes = await fetch("/api/use-credit", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ phone: registeredPhone }),
+        });
+
+        const creditData = await creditRes.json();
+
+        if (creditData.ok) {
+          setAccessLimit(creditData.limit ?? accessLimit ?? 3);
+          setAccessUsed(creditData.used ?? accessUsed ?? 0);
+          toast.success(
+            `AI эрх ашиглагдлаа. Үлдсэн: ${creditData.remaining ?? 0}`,
+          );
+        } else {
+          setShowAdminModal(true);
+          toast.error("Таны AI эрх дууссан байна.");
+        }
+      }
     } catch (error) {
       console.error(error);
+      setAiTips([]);
       setStatus("AI алдаа");
       alert("AI дизайн үүсгэхэд алдаа гарлаа");
+    } finally {
+      setIsAiLoading(false);
     }
   };
 
+  const applyLayout = (type: LayoutType) => {
+    setLayoutType(type);
+
+    const next = cloneElements(elementsRef.current);
+
+    const safeLeft = previewSafe;
+    const safeTop = previewSafe;
+    const safeRight = previewCanvasWidth - previewSafe;
+    const safeBottom = previewCanvasHeight - previewSafe;
+    const safeWidth = safeRight - safeLeft;
+    const safeHeight = safeBottom - safeTop;
+
+    const textEls = next
+      .filter((el) => el.type === "text")
+      .sort((a, b) => {
+        const order: TextRole[] = [
+          "primary",
+          "secondary",
+          "support",
+          "contact",
+        ];
+        return (
+          order.indexOf(a.role ?? "support") -
+          order.indexOf(b.role ?? "support")
+        );
+      });
+
+    if (textEls.length === 0) return;
+
+    const getStyle = (role: TextRole) => {
+      const base = getRoleLayoutConfig(
+        role,
+        previewCanvasWidth,
+        previewCanvasHeight,
+      );
+
+      return {
+        ...base,
+
+        fontBoost:
+          role === "primary"
+            ? 1.0
+            : role === "secondary"
+              ? 0.7
+              : role === "support"
+                ? 0.8
+                : 0.6,
+
+        maxWidth:
+          role === "primary"
+            ? "80%"
+            : role === "secondary"
+              ? "70%"
+              : role === "support"
+                ? "65%"
+                : "60%",
+
+        whiteSpace: "pre-wrap",
+        wordBreak: "break-word",
+        textAlign: "center",
+
+        fontWeight:
+          role === "primary"
+            ? 900
+            : role === "support"
+              ? 800
+              : role === "secondary"
+                ? 700
+                : 600,
+      };
+    };
+
+    let gap = previewCanvasHeight * 0.028;
+    let boxWidth = safeWidth;
+    let boxX = safeLeft;
+    let align: "left" | "center" | "right" = "center";
+
+    if (type === "center") {
+      gap = previewCanvasHeight * 0.025;
+      boxWidth = safeWidth * 0.86;
+      boxX = safeLeft + (safeWidth - boxWidth) / 2;
+      align = "center";
+    }
+
+    if (type === "top-heavy") {
+      gap = previewCanvasHeight * 0.012;
+      boxWidth = safeWidth * 0.9;
+      boxX = safeLeft + (safeWidth - boxWidth) / 2;
+      align = "center";
+    }
+
+    if (type === "hero") {
+      gap = previewCanvasHeight * 0.012;
+      boxWidth = safeWidth * 0.94;
+      boxX = safeLeft + (safeWidth - boxWidth) / 2;
+      align = "center";
+    }
+
+    if (type === "split") {
+      gap = previewCanvasHeight * 0.014;
+      boxWidth = safeWidth * 0.48;
+      boxX = safeLeft + safeWidth * 0.04;
+      align = "left";
+    }
+
+    textEls.forEach((el) => {
+      const role = el.role ?? "support";
+      const style = getStyle(role);
+
+      el.width = boxWidth;
+
+      const estimatedHeight = measureTextHeightForFont(
+        el.text ?? "",
+        boxWidth,
+        Math.round(
+          fitFontSizeSmart(
+            el.text ?? "",
+            role,
+            boxWidth,
+            style.boxHeight,
+            previewCanvasWidth,
+            previewCanvasHeight,
+          ) * style.fontBoost,
+        ),
+        style.fontWeight,
+        style.lineHeight,
+        el.fontFamily,
+      );
+
+      const maxAllowedHeight = previewCanvasHeight * 0.25;
+
+      let finalFont =
+        fitFontSizeSmart(
+          el.text ?? "",
+          role,
+          boxWidth,
+          style.boxHeight,
+          previewCanvasWidth,
+          previewCanvasHeight,
+        ) * style.fontBoost;
+
+      // 🔥 dominance
+      if (role === "primary") finalFont *= 1.25;
+      else if (role === "secondary") finalFont *= 0.95;
+      else if (role === "support") finalFont *= 0.9;
+      else if (role === "contact") finalFont *= 0.85;
+
+      // 🔥 overflow fix
+      while (estimatedHeight > maxAllowedHeight && finalFont > 10) {
+        finalFont *= 0.92;
+      }
+
+      el.fontSize = Math.round(finalFont);
+
+      el.height = Math.max(style.boxHeight, estimatedHeight);
+      el.fontWeight = style.fontWeight;
+      el.lineHeight = style.lineHeight;
+      el.textShadow =
+        role === "primary"
+          ? "0 6px 20px rgba(0,0,0,0.6)"
+          : "0 2px 8px rgba(0,0,0,0.28)";
+
+      el.fontSize = Math.round(finalFont);
+    });
+    let safeGap = Math.max(
+      previewCanvasHeight * 0.02,
+      previewCanvasHeight / (textEls.length * 6),
+    );
+    const maxLines = 4;
+
+    if (textEls.length > maxLines) {
+      // gap-ийг багасгана
+      safeGap *= 0.7;
+    }
+
+    const totalHeight =
+      textEls.reduce((sum, el) => sum + el.height, 0) +
+      safeGap * Math.max(0, textEls.length - 1);
+
+    let y = safeTop + (safeHeight - totalHeight) / 2;
+
+    if (type === "top-heavy") {
+      y = safeTop + previewCanvasHeight * 0.055;
+    }
+
+    if (type === "hero") {
+      y = safeTop + previewCanvasHeight * 0.12;
+    }
+
+    if (type === "split") {
+      y = safeTop + (safeHeight - totalHeight) / 2;
+    }
+
+    y = clamp(y, safeTop, safeBottom - totalHeight);
+
+    textEls.forEach((el) => {
+      el.x = boxX;
+      el.y = y;
+      el.textAlign = align;
+
+      if (type === "split") {
+        el.position = "center-left";
+      } else if (type === "top-heavy") {
+        el.position = "top-center";
+      } else {
+        el.position = "center";
+      }
+
+      el.xMm = pxToMm(el.x);
+      el.yMm = pxToMm(el.y);
+      el.widthMm = pxToMm(el.width);
+      el.heightMm = pxToMm(el.height);
+
+      y += el.height + safeGap;
+    });
+
+    pushHistory(next);
+  };
+
+  const resetSession = () => {
+    localStorage.removeItem("print_editor_user_registered");
+    localStorage.removeItem("user_phone");
+    localStorage.removeItem("print_editor_ai_generate_count");
+
+    setGenerateCount(0);
+    setShowRegister(true);
+
+    toast.success("Шинэ хэрэглэгч эхэллээ");
+  };
+
+  const handleRegister = async () => {
+    if (!registerName.trim() || !registerPhone.trim()) {
+      toast.error("Нэр, утсаа оруулна уу");
+      return;
+    }
+
+    try {
+      const data = await registerUser(
+        registerName.trim(),
+        registerPhone.trim(),
+      );
+      localStorage.setItem("print_editor_user_registered", "1");
+      localStorage.setItem("user_phone", registerPhone.trim());
+
+      setIsRegistered(true);
+      setShowRegister(false);
+      setRegisterName("");
+      setRegisterPhone("");
+
+      toast.success(
+        data.alreadyExists
+          ? "Бүртгэлтэй хэрэглэгчээр нэвтэрлээ"
+          : "Амжилттай бүртгэгдлээ. 3 AI эрх нэмэгдлээ",
+      );
+    } catch (error) {
+      console.error("REGISTER ERROR:", error);
+      toast.error("Бүртгүүлэхэд алдаа гарлаа");
+    }
+  };
   const handleLogoUpload = async (file: File) => {
     const reader = new FileReader();
 
@@ -1898,196 +2048,73 @@ export default function EditorShell() {
     reader.readAsDataURL(file);
   };
 
-  function drawCropMarks(
-    pdf: jsPDF,
-    width: number,
-    height: number,
-    bleed: number,
-  ) {
-    const markLength = 5;
-    const offset = 2;
-
-    const left = bleed;
-    const right = width - bleed;
-    const top = bleed;
-    const bottom = height - bleed;
-
-    pdf.setLineWidth(0.2);
-
-    pdf.line(
-      left - offset - markLength,
-      top - offset,
-      left - offset,
-      top - offset,
-    );
-    pdf.line(
-      left - offset,
-      top - offset - markLength,
-      left - offset,
-      top - offset,
-    );
-
-    pdf.line(
-      right + offset,
-      top - offset,
-      right + offset + markLength,
-      top - offset,
-    );
-    pdf.line(
-      right + offset,
-      top - offset - markLength,
-      right + offset,
-      top - offset,
-    );
-
-    pdf.line(
-      left - offset - markLength,
-      bottom + offset,
-      left - offset,
-      bottom + offset,
-    );
-    pdf.line(
-      left - offset,
-      bottom + offset,
-      left - offset,
-      bottom + offset + markLength,
-    );
-
-    pdf.line(
-      right + offset,
-      bottom + offset,
-      right + offset + markLength,
-      bottom + offset,
-    );
-    pdf.line(
-      right + offset,
-      bottom + offset,
-      right + offset,
-      bottom + offset + markLength,
-    );
-  }
-
-  const buildVectorPdf = async (scaleFactor = 1) => {
-    const pageWidth = (doc.widthMm + doc.bleedMm * 2) / scaleFactor;
-    const pageHeight = (doc.heightMm + doc.bleedMm * 2) / scaleFactor;
-
-    const pdf = new jsPDF({
-      orientation: pageWidth >= pageHeight ? "landscape" : "portrait",
-      unit: "mm",
-      format: [pageWidth, pageHeight],
-      compress: true,
-    });
-
-    await initPdfFonts(pdf);
-
-    for (const el of Array.isArray(elements) ? elements : []) {
-      const x =
-        (doc.bleedMm + (el.xMm !== undefined ? el.xMm : pxToMm(el.x))) /
-        scaleFactor;
-
-      const y =
-        (doc.bleedMm + (el.yMm !== undefined ? el.yMm : pxToMm(el.y))) /
-        scaleFactor;
-
-      const width =
-        (el.widthMm !== undefined ? el.widthMm : pxToMm(el.width)) /
-        scaleFactor;
-
-      const height =
-        (el.heightMm !== undefined ? el.heightMm : pxToMm(el.height)) /
-        scaleFactor;
-
-      if (el.type === "text" && el.text) {
-        const fontSizePt = fontPxToPt(
-          (el.fontSize ?? 40) * (el.fontScale ?? 1),
-        );
-        const align = getPdfTextAlign(el.textAlign);
-
-        pdf.setFont(
-          "NotoSans",
-          (el.fontWeight ?? 400) >= 700 ? "bold" : "normal",
-        );
-
-        pdf.setFontSize(fontSizePt);
-        pdf.setTextColor(el.color ?? "#000000");
-
-        const textX =
-          align === "center"
-            ? x + width / 2
-            : align === "right"
-              ? x + width
-              : x;
-
-        const lines = pdf.splitTextToSize(el.text, width);
-
-        pdf.text(lines, textX, y, {
-          align,
-          baseline: "top",
-          lineHeightFactor: el.lineHeight ?? 1.2,
-        });
-      }
-
-      if (el.type === "line") {
-        pdf.setDrawColor(el.color ?? "#000000");
-        pdf.setLineWidth(
-          Math.max(
-            0.2,
-            pxToMm(el.lineThickness ?? el.height ?? 6) / scaleFactor,
-          ),
-        );
-        pdf.line(x, y + height / 2, x + width, y + height / 2);
-      }
-
-      if (el.type === "logo" && el.src) {
-        const format =
-          el.src.includes("image/jpeg") || el.src.includes("image/jpg")
-            ? "JPEG"
-            : "PNG";
-
-        pdf.addImage(el.src, format, x, y, width, height);
-      }
-    }
-
-    if (includeCropMarks) {
-      drawCropMarks(pdf, pageWidth, pageHeight, doc.bleedMm / scaleFactor);
-    }
-
-    if (scaleFactor > 1) {
-      pdf.setTextColor(200, 200, 200);
-      pdf.setFontSize(80 / scaleFactor);
-
-      pdf.text("NEGUN DESIGN", pageWidth / 2, pageHeight / 2, {
-        align: "center",
-      });
-
-      pdf.setFontSize(40 / scaleFactor);
-
-      pdf.text("SCALE 1:10", pageWidth / 2, pageHeight / 2 + 10, {
-        align: "center",
-      });
-    }
-
-    return pdf;
-  };
-
+  const buildExportPayload = (
+    measuredElements: EditorElement[],
+    preferCmyk = false,
+  ) => ({
+    doc: {
+      widthMm: Number(doc.widthMm),
+      heightMm: Number(doc.heightMm),
+      bleedMm: Number(doc.bleedMm),
+      safeMm: Number(doc.safeMm),
+    },
+    surfaceWidthPx: surfaceRef.current?.getBoundingClientRect().width ?? 1,
+    surfaceHeightPx: surfaceRef.current?.getBoundingClientRect().height ?? 1,
+    elements: measuredElements.map((el: any) => ({
+      ...el,
+      xMm: typeof el.xMm === "number" ? el.xMm : pxToMm(el.x ?? 0),
+      yMm: typeof el.yMm === "number" ? el.yMm : pxToMm(el.y ?? 0),
+      widthMm:
+        typeof el.widthMm === "number" ? el.widthMm : pxToMm(el.width ?? 0),
+      heightMm:
+        typeof el.heightMm === "number" ? el.heightMm : pxToMm(el.height ?? 0),
+      pdfLeftPx:
+        typeof el.pdfLeftPx === "number" && Number.isFinite(el.pdfLeftPx)
+          ? el.pdfLeftPx
+          : undefined,
+      pdfTopPx:
+        typeof el.pdfTopPx === "number" && Number.isFinite(el.pdfTopPx)
+          ? el.pdfTopPx
+          : undefined,
+      pdfWidthPx:
+        typeof el.pdfWidthPx === "number" && Number.isFinite(el.pdfWidthPx)
+          ? el.pdfWidthPx
+          : undefined,
+      pdfHeightPx:
+        typeof el.pdfHeightPx === "number" && Number.isFinite(el.pdfHeightPx)
+          ? el.pdfHeightPx
+          : undefined,
+      fontSize:
+        typeof el.fontSize === "number" && Number.isFinite(el.fontSize)
+          ? el.fontSize
+          : 40,
+      lineHeight:
+        typeof el.lineHeight === "number" && Number.isFinite(el.lineHeight)
+          ? el.lineHeight
+          : 1.2,
+    })),
+    includeCropMarks,
+    preferCmyk,
+  });
   const buildPreviewImage = async () => {
     if (!surfaceRef.current) return null;
 
     const dataUrl = await toPng(surfaceRef.current, {
       cacheBust: true,
-      pixelRatio: 2,
+      pixelRatio: 3, // 🔥 өмнө 2 байсан → 3 болго
     });
 
     return dataUrl;
   };
 
   const handleOrder = async () => {
+    if (isSendingOrder) return;
+    if (!surfaceRef.current) {
+      alert("Preview surface олдсонгүй");
+      setIsSendingOrder(false);
+      return;
+    }
     try {
-      if (!name || !phone) {
-        alert("Нэр, утсаа оруулна уу");
-        return;
-      }
-
       if (!surfaceRef.current) {
         alert("Preview surface олдсонгүй");
         return;
@@ -2095,41 +2122,39 @@ export default function EditorShell() {
 
       setStatus("PDF үүсгэж байна...");
 
-      const pdf = await buildVectorPdf(1);
-      const pdfArrayBuffer = pdf.output("arraybuffer");
+      const measuredElements = elements.map((el) => {
+        const node = document.querySelector(
+          `[data-element-id="${el.id}"]`,
+        ) as HTMLElement | null;
 
-      const bytes = new Uint8Array(pdfArrayBuffer);
-      let binary = "";
-      const chunkSize = 0x8000;
+        if (!node || !surfaceRef.current) {
+          return el;
+        }
 
-      for (let i = 0; i < bytes.length; i += chunkSize) {
-        const sub = bytes.subarray(i, i + chunkSize);
-        binary += String.fromCharCode(...sub);
-      }
+        const rect = node.getBoundingClientRect();
+        const parentRect = surfaceRef.current.getBoundingClientRect();
 
-      const pdfBufferBase64 = btoa(binary);
+        return {
+          ...el,
+          pdfLeftPx: rect.left - parentRect.left,
+          pdfTopPx: rect.top - parentRect.top,
+          pdfWidthPx: rect.width,
+          pdfHeightPx: rect.height,
+        };
+      });
 
-      const pdfRes = await fetch("http://localhost:3001/export-pdf", {
+      const pdfRes = await fetch("/api/export-pdf", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          pdfBufferBase64,
-        }),
+        body: JSON.stringify(buildExportPayload(measuredElements, false)),
       });
-
-      const pdfData = await pdfRes.json().catch(() => null);
-
-      if (!pdfRes.ok || !pdfData?.success || !pdfData?.pdfBase64) {
-        throw new Error(pdfData?.error || "PDF export failed");
+      if (!pdfRes.ok) {
+        throw new Error("PDF export failed");
       }
 
-      const pdfBytes = Uint8Array.from(atob(pdfData.pdfBase64), (c) =>
-        c.charCodeAt(0),
-      );
-
-      const pdfBlob = new Blob([pdfBytes], { type: "application/pdf" });
+      const pdfBlob = await pdfRes.blob();
 
       const previewPng = await toPng(surfaceRef.current, {
         cacheBust: true,
@@ -2152,14 +2177,21 @@ export default function EditorShell() {
       });
 
       if (!orderRes.ok) {
-        throw new Error("Send order failed");
+        const errData = await orderRes.json().catch(() => null);
+        throw new Error(errData?.error || "Send order failed");
       }
-
       setStatus("Амжилттай илгээгдлээ ✅");
-    } catch (err) {
+      toast.success("Амжилттай илгээгдлээ ✅");
+
+      setOrderOpen(false);
+      setName("");
+      setPhone("");
+    } catch (err: any) {
       console.error(err);
-      alert("Алдаа гарлаа");
+      alert(err?.message || "Алдаа гарлаа");
       setStatus("Алдаа");
+    } finally {
+      setIsSendingOrder(false);
     }
   };
 
@@ -2167,56 +2199,54 @@ export default function EditorShell() {
     try {
       setStatus("PDF үүсгэж байна...");
 
-      const pdf = await buildVectorPdf(1);
-      const pdfArrayBuffer = pdf.output("arraybuffer");
-
-      const bytes = new Uint8Array(pdfArrayBuffer);
-      let binary = "";
-      const chunkSize = 0x8000;
-
-      for (let i = 0; i < bytes.length; i += chunkSize) {
-        const sub = bytes.subarray(i, i + chunkSize);
-        binary += String.fromCharCode(...sub);
+      if (!surfaceRef.current) {
+        alert("Preview surface олдсонгүй");
+        return;
       }
 
-      const pdfBufferBase64 = btoa(binary);
+      const measuredElements = elements.map((el) => {
+        const node = document.querySelector(
+          `[data-element-id="${el.id}"]`,
+        ) as HTMLElement | null;
 
-      const res = await fetch("http://localhost:3001/export-pdf", {
+        if (!node) return el;
+
+        const rect = node.getBoundingClientRect();
+        const parentRect = surfaceRef.current!.getBoundingClientRect();
+
+        return {
+          ...el,
+          pdfLeftPx: rect.left - parentRect.left,
+          pdfTopPx: rect.top - parentRect.top,
+          pdfWidthPx: rect.width,
+          pdfHeightPx: rect.height,
+        };
+      });
+
+      const res = await fetch("/api/export-pdf", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          pdfBufferBase64,
-        }),
+        body: JSON.stringify(buildExportPayload(measuredElements, false)),
       });
 
-      const data = await res.json().catch(() => null);
-
-      if (!res.ok || !data?.success || !data?.pdfBase64) {
-        throw new Error(data?.error || "PDF export failed");
+      if (!res.ok) {
+        throw new Error("PDF export failed");
       }
 
-      const pdfBytes = Uint8Array.from(atob(data.pdfBase64), (c) =>
-        c.charCodeAt(0),
-      );
+      const blob = await res.blob();
 
-      const blob = new Blob([pdfBytes], { type: "application/pdf" });
       const url = URL.createObjectURL(blob);
-
       const a = document.createElement("a");
       a.href = url;
       a.download = "design.pdf";
-      document.body.appendChild(a);
       a.click();
-      a.remove();
 
-      URL.revokeObjectURL(url);
-      setStatus("PDF бэлэн");
+      setStatus("PDF бэлэн ✅");
     } catch (err) {
       console.error(err);
-      alert("PDF үүсгэхэд алдаа гарлаа");
-      setStatus("Алдаа");
+      setStatus("PDF алдаа ❌");
     }
   };
 
@@ -2257,31 +2287,88 @@ export default function EditorShell() {
         setSelectedId(null);
       }}
     >
-      <div className="mx-auto grid max-w-[1700px] gap-4 p-3 md:grid-cols-[360px_minmax(0,1fr)] md:p-4">
+      <div className="mx-auto grid max-w-[1700px] grid-cols-1 gap-4 p-3 xl:grid-cols-[360px_minmax(0,1fr)] md:p-4">
         <aside className="rounded-3xl bg-white p-4 shadow-sm">
           <div className="text-lg font-bold text-slate-900">
-            AI текст үүсгэх
+            AI дизайн туслах
           </div>
           <p className="mt-1 text-sm text-slate-500">
-            Зар, нэрийн хуудас, танилцуулгын текстээ бичүүлээрэй.
+            Таны санаанд тулгуурлан текст, өнгө болон зохиомжийг автоматаар
+            үүсгэнэ.
           </p>
 
           <textarea
             value={aiPrompt}
             onChange={(e) => setAiPrompt(e.target.value)}
-            placeholder="Жишээ: Монгол хэл дээр гоо сайхны салбарын хямдралын постерын текст бичиж өг"
+            placeholder="Санаагаа бичнэ үү… (жишээ: кофе шоп постер, бор фон, алтлаг бичигтэй, гарчиг дээд хэсэгт, Дуудах текстүүдийг доор, дээр, дунд, зүүн, баруун, зүүн доор гэх мэт байршил зааж өг...)"
             className="mt-4 min-h-36 w-full rounded-2xl border border-slate-200 p-3 text-sm outline-none transition focus:border-blue-500"
           />
+          {!isKiosk && (
+            <div className="mt-2 text-sm text-slate-500">
+              {isRegistered ? (
+                <span
+                  className={`font-semibold transition-all duration-300 ${
+                    creditFlash
+                      ? "rounded-lg bg-green-100 px-2 py-1 text-green-700"
+                      : "text-green-600"
+                  }`}
+                >
+                  ✔ Бүртгэлтэй хэрэглэгч
+                  <span className="ml-1 text-slate-700">
+                    · Үлдсэн:{" "}
+                    <b className="text-blue-600">
+                      {Math.max(0, (accessLimit ?? 3) - (accessUsed ?? 0))}
+                    </b>
+                  </span>
+                </span>
+              ) : (
+                <span>
+                  Үлдсэн:{" "}
+                  <b className="text-blue-600">
+                    {Math.max(0, MAX_FREE - generateCount)}
+                  </b>{" "}
+                  / {MAX_FREE}
+                </span>
+              )}
+            </div>
+          )}
 
           <button
             onClick={runAiText}
             type="button"
-            className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-bold text-white hover:bg-slate-800"
+            className={`mt-3 inline-flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-bold ${
+              !isRegistered && generateCount >= MAX_FREE
+                ? "bg-gray-400 text-white"
+                : "bg-slate-900 text-white hover:bg-slate-800"
+            }`}
           >
-            <Wand2 className="h-4 w-4" />
-            AI текст үүсгэх
+            {!isRegistered && generateCount >= MAX_FREE
+              ? "Бүртгүүлж үргэлжлүүлэх"
+              : "AI текст үүсгэх"}
           </button>
 
+          {isKiosk && (
+            <button
+              type="button"
+              onClick={resetSession}
+              className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              🔄 Шинэ хэрэглэгч
+            </button>
+          )}
+
+          {aiTips.length > 0 && (
+            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+              <div className="text-sm font-bold text-amber-900">
+                💡 AI зөвлөгөө
+              </div>
+              <div className="mt-2 space-y-2 text-sm text-amber-800">
+                {aiTips.map((tip, index) => (
+                  <div key={index}>• {tip}</div>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="mt-8 border-t border-slate-200 pt-6">
             <div className="text-lg font-bold text-slate-900">
               Хэвлэлийн хэмжээ
@@ -2291,72 +2378,128 @@ export default function EditorShell() {
             </p>
 
             <div className="mt-4 grid grid-cols-2 gap-3">
-              <label className="grid gap-1 text-sm">
+              <label className="grid gap-1.5 text-sm">
                 <span>Өргөн (mm)</span>
                 <input
+                  ref={widthInputRef}
                   type="text"
                   value={doc.widthMm}
                   placeholder="мм (жишээ: 3500)"
-                  onFocus={(e) => e.target.select()}
-                  onChange={(e) =>
+                  onFocus={(e) => {
+                    if (e.target.value) e.target.select();
+                  }}
+                  onChange={(e) => {
                     setDoc((prev) => ({
                       ...prev,
-                      widthMm: e.target.value as any,
-                    }))
-                  }
+                      widthMm: e.target.value,
+                    }));
+
+                    if (sizeError.width) {
+                      setSizeError((prev) => ({ ...prev, width: undefined }));
+                    }
+                  }}
                   onBlur={(e) => {
-                    const mm = parseMm(e.target.value);
+                    const raw = e.target.value.trim();
+
+                    if (!raw) {
+                      setDoc((prev) => ({
+                        ...prev,
+                        widthMm: "",
+                      }));
+                      return;
+                    }
+
+                    const mm = parseMm(raw);
+
                     setDoc((prev) => ({
                       ...prev,
-                      widthMm: !isNaN(mm) ? Math.max(100, mm) : 3500,
+                      widthMm:
+                        Number.isFinite(mm) && mm > 0 ? Math.max(100, mm) : "",
                     }));
                   }}
-                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none"
+                  className={`w-full rounded-xl border px-3 py-2 outline-none ${
+                    sizeError.width
+                      ? "border-red-500 bg-red-50"
+                      : "border-slate-200 bg-white"
+                  }`}
                 />
+                {sizeError.width && (
+                  <span className="text-xs leading-5 text-red-500">
+                    {sizeError.width}
+                  </span>
+                )}
               </label>
-
               <label className="grid gap-1 text-sm">
                 <span>Өндөр (mm)</span>
                 <input
+                  ref={heightInputRef}
                   type="text"
                   value={doc.heightMm}
                   placeholder="мм (жишээ: 1500)"
-                  onFocus={(e) => e.target.select()}
-                  onChange={(e) =>
+                  onFocus={(e) => {
+                    if (e.target.value) e.target.select();
+                  }}
+                  onChange={(e) => {
                     setDoc((prev) => ({
                       ...prev,
-                      heightMm: e.target.value as any,
-                    }))
-                  }
+                      heightMm: e.target.value,
+                    }));
+
+                    if (sizeError.height) {
+                      setSizeError((prev) => ({ ...prev, height: undefined }));
+                    }
+                  }}
                   onBlur={(e) => {
-                    const mm = parseMm(e.target.value);
+                    const raw = e.target.value.trim();
+
+                    if (!raw) {
+                      setDoc((prev) => ({
+                        ...prev,
+                        heightMm: "",
+                      }));
+                      return;
+                    }
+
+                    const mm = parseMm(raw);
+
                     setDoc((prev) => ({
                       ...prev,
-                      heightMm: !isNaN(mm) ? Math.max(100, mm) : 1500,
+                      heightMm:
+                        Number.isFinite(mm) && mm > 0 ? Math.max(100, mm) : "",
                     }));
                   }}
-                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none"
+                  className={`w-full rounded-xl border px-3 py-2 outline-none ${
+                    sizeError.height
+                      ? "border-red-500 bg-red-50"
+                      : "border-slate-200 bg-white"
+                  }`}
                 />
+                {sizeError.height && (
+                  <span className="text-xs leading-5 text-red-500">
+                    {sizeError.height}
+                  </span>
+                )}
               </label>
-
               <label className="grid gap-1 text-sm">
                 <span>Илүүдэл зай (mm)</span>
                 <input
                   type="text"
                   value={doc.bleedMm}
-                  placeholder="мм"
-                  onFocus={(e) => e.target.select()}
+                  placeholder="мм (жишээ: 5)"
+                  onFocus={(e) => {
+                    if (e.target.value) e.target.select();
+                  }}
                   onChange={(e) =>
                     setDoc((prev) => ({
                       ...prev,
-                      bleedMm: e.target.value as any,
+                      bleedMm: Number(e.target.value) || 0,
                     }))
                   }
                   onBlur={(e) => {
                     const mm = parseMm(e.target.value);
                     setDoc((prev) => ({
                       ...prev,
-                      bleedMm: !isNaN(mm) ? Math.max(0, mm) : 5,
+                      bleedMm: Number.isFinite(mm) && mm >= 0 ? mm : 5,
                     }));
                   }}
                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none"
@@ -2451,17 +2594,17 @@ export default function EditorShell() {
                 Export quality: {EXPORT_DPI} DPI
               </div>
               <div className="mt-1 text-xs text-slate-500">
-                Size: {doc.widthMm} × {doc.heightMm} mm
+                Хэмжээ: {doc.widthMm} × {doc.heightMm} mm
               </div>
               <div className="mt-1 text-xs text-slate-500">
-                Bleed: {doc.bleedMm} mm · Safe area: {doc.safeMm} mm
+                Илүүдэл зай: {doc.bleedMm} mm · Аюулгүй бүс: {doc.safeMm} mm
               </div>
             </div>
           </div>
         </aside>
 
         <section
-          className="rounded-3xl bg-white p-3 shadow-sm md:p-4"
+          className="min-w-0 rounded-3xl bg-white p-3 shadow-sm md:p-4"
           onPointerDown={(e) => {
             if (e.target === e.currentTarget) {
               setSelectedId(null);
@@ -2469,14 +2612,14 @@ export default function EditorShell() {
           }}
         >
           <div
-            className="relative overflow-auto rounded-3xl bg-slate-100 p-4"
+            className="relative rounded-3xl bg-slate-100 p-2 md:p-4"
             onPointerDown={(e) => {
               if (e.target === e.currentTarget) {
                 setSelectedId(null);
               }
             }}
           >
-            <div className="absolute left-1/2 top-4 z-20 w-[min(calc(100%-16px),900px)] -translate-x-1/2 rounded-2xl border border-slate-200 bg-white/95 px-3 py-2 shadow-lg backdrop-blur">
+            <div className="sticky top-2 z-20 mx-auto mb-4 w-full max-w-[900px] rounded-2xl border border-slate-200 bg-white/95 px-3 py-2 shadow-lg backdrop-blur">
               <div className="flex flex-wrap items-center justify-center gap-2">
                 <ToolbarButton icon={Undo2} label="Буцаах" onClick={undo} />
                 <ToolbarButton icon={Redo2} label="Дахин" onClick={redo} />
@@ -2485,11 +2628,11 @@ export default function EditorShell() {
                   label="Текст"
                   onClick={() => changeRole("support")}
                 />
-                <ToolbarButton
+                {/* <ToolbarButton
                   icon={PanelTopClose}
                   label="Шугам"
                   onClick={addLine}
-                />
+                /> */}
 
                 <div className="mx-1 hidden h-8 w-px bg-slate-200 md:block" />
 
@@ -2516,6 +2659,35 @@ export default function EditorShell() {
                     <Plus className="h-4 w-4" />
                   </button>
                 </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => applyLayout("center")}
+                    className="rounded-xl border px-3 py-1 text-sm"
+                  >
+                    Center
+                  </button>
+
+                  <button
+                    onClick={() => applyLayout("top-heavy")}
+                    className="rounded-xl border px-3 py-1 text-sm"
+                  >
+                    Top
+                  </button>
+
+                  <button
+                    onClick={() => applyLayout("hero")}
+                    className="rounded-xl border px-3 py-1 text-sm"
+                  >
+                    Hero
+                  </button>
+
+                  <button
+                    onClick={() => applyLayout("split")}
+                    className="rounded-xl border px-3 py-1 text-sm"
+                  >
+                    Split
+                  </button>
+                </div>
 
                 <ToolbarButton
                   icon={Printer}
@@ -2533,7 +2705,7 @@ export default function EditorShell() {
             </div>
 
             <div
-              className="relative mx-auto flex min-h-[75vh] items-start justify-center pt-24"
+              className="relative mx-auto flex min-h-[60vh] w-full items-start justify-start overflow-x-auto overflow-y-visible pt-14 md:justify-center"
               onPointerDown={(e) => {
                 if (e.target === e.currentTarget) {
                   setSelectedId(null);
@@ -2570,102 +2742,116 @@ export default function EditorShell() {
                     }}
                   />
                 )}
-
-                <div
-                  ref={surfaceRef}
-                  onPointerDown={(e) => {
-                    if (e.target === e.currentTarget) {
-                      setSelectedId(null);
-                    }
-                  }}
-                  className="absolute overflow-visible rounded-[30px] border border-slate-200 bg-white shadow-xl"
-                  style={{
-                    width: previewTotalWidth * scale,
-                    height: previewTotalHeight * scale,
-                    background:
-                      "linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)",
-                  }}
-                >
+                {hasValidDocSize ? (
                   <div
-                    className="pointer-events-none absolute inset-0 rounded-[30px]"
-                    style={{
-                      boxShadow: `inset 0 0 0 ${previewBleed * scale}px rgba(239, 68, 68, 0.06)`,
-                    }}
-                  />
-
-                  {(Array.isArray(elements) ? elements : []).map((item) => (
-                    <CanvasItem
-                      key={item.id}
-                      element={item}
-                      scale={scale}
-                      selected={item.id === selectedId}
-                      docWidth={previewCanvasWidth}
-                      docHeight={previewCanvasHeight}
-                      previewBleed={previewBleed}
-                      previewSafe={previewSafe}
-                      onSelect={() => setSelectedId(item.id)}
-                      onDelete={() => {
-                        const base = Array.isArray(elementsRef.current)
-                          ? elementsRef.current
-                          : [];
-                        const next = base.filter((el) => el.id !== item.id);
+                    ref={surfaceRef}
+                    onPointerDown={(e) => {
+                      if (e.target === e.currentTarget) {
                         setSelectedId(null);
-                        pushHistory(next);
-                      }}
-                      onPatch={(patch) => {
-                        patchElement(item.id, patch);
-                      }}
-                      onCommit={commitHistory}
-                      onDragStart={() => {
-                        captureHistoryStart();
-                        setIsDraggingElement(true);
-                      }}
-                      onDragEnd={() => {
-                        setIsDraggingElement(false);
-                      }}
-                      onGuidesChange={(nextGuides) => {
-                        setGuides({
-                          vertical:
-                            nextGuides.vertical !== null
-                              ? nextGuides.vertical + previewBleed
-                              : null,
-                          horizontal:
-                            nextGuides.horizontal !== null
-                              ? nextGuides.horizontal + previewBleed
-                              : null,
-                        });
-                      }}
-                    />
-                  ))}
-
-                  {guides.vertical !== null && (
+                      }
+                    }}
+                    className="relative overflow-visible rounded-[30px] border border-slate-200 bg-white shadow-xl"
+                    style={{
+                      width: previewTotalWidth * scale,
+                      height: previewTotalHeight * scale,
+                      background:
+                        "linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)",
+                    }}
+                  >
                     <div
-                      className="pointer-events-none absolute top-0 z-30"
+                      className="pointer-events-none absolute inset-0 rounded-[30px]"
                       style={{
-                        left: guides.vertical * scale,
-                        width: 2,
-                        height: previewTotalHeight * scale,
-                        backgroundColor: GUIDE_COLOR,
-                        opacity: 1,
-                        boxShadow: `0 0 0 1px ${GUIDE_COLOR}33, 0 0 8px ${GUIDE_COLOR}66`,
+                        boxShadow: `inset 0 0 0 ${previewBleed * scale}px rgba(239, 68, 68, 0.06)`,
                       }}
                     />
-                  )}
 
-                  {guides.horizontal !== null && (
-                    <div
-                      className="pointer-events-none absolute left-0 z-30"
-                      style={{
-                        top: guides.horizontal * scale,
-                        height: 2,
-                        width: previewTotalWidth * scale,
-                        backgroundColor: GUIDE_COLOR,
-                        opacity: 1,
-                        boxShadow: `0 0 0 1px ${GUIDE_COLOR}33, 0 0 8px ${GUIDE_COLOR}66`,
-                      }}
-                    />
-                  )}
-                </div>
+                    {isAiLoading && (
+                      <div className="absolute inset-0 z-[80] flex flex-col items-center justify-center rounded-[30px] bg-white/80 backdrop-blur-sm">
+                        <div className="h-10 w-10 animate-spin rounded-full border-4 border-slate-300 border-t-blue-600" />
+                        <div className="mt-3 text-sm font-semibold text-slate-700">
+                          AI таны загварыг бэлдэж байна...
+                        </div>
+                      </div>
+                    )}
+
+                    {(Array.isArray(elements) ? elements : []).map((item) => (
+                      <CanvasItem
+                        key={item.id}
+                        element={item}
+                        scale={scale}
+                        selected={item.id === selectedId}
+                        docWidth={previewCanvasWidth}
+                        docHeight={previewCanvasHeight}
+                        previewBleed={previewBleed}
+                        previewSafe={previewSafe}
+                        onSelect={() => setSelectedId(item.id)}
+                        onDelete={() => {
+                          const base = Array.isArray(elementsRef.current)
+                            ? elementsRef.current
+                            : [];
+                          const next = base.filter((el) => el.id !== item.id);
+                          setSelectedId(null);
+                          pushHistory(next);
+                        }}
+                        onPatch={(patch) => {
+                          patchElement(item.id, patch);
+                        }}
+                        onCommit={commitHistory}
+                        onDragStart={() => {
+                          captureHistoryStart();
+                          setIsDraggingElement(true);
+                        }}
+                        onDragEnd={() => {
+                          setIsDraggingElement(false);
+                        }}
+                        onGuidesChange={(nextGuides) => {
+                          setGuides({
+                            vertical:
+                              nextGuides.vertical !== null
+                                ? nextGuides.vertical + previewBleed
+                                : null,
+                            horizontal:
+                              nextGuides.horizontal !== null
+                                ? nextGuides.horizontal + previewBleed
+                                : null,
+                          });
+                        }}
+                      />
+                    ))}
+
+                    {guides.vertical !== null && (
+                      <div
+                        className="pointer-events-none absolute top-0 z-30"
+                        style={{
+                          left: guides.vertical * scale,
+                          width: 2,
+                          height: previewTotalHeight * scale,
+                          backgroundColor: GUIDE_COLOR,
+                          opacity: 1,
+                          boxShadow: `0 0 0 1px ${GUIDE_COLOR}33, 0 0 8px ${GUIDE_COLOR}66`,
+                        }}
+                      />
+                    )}
+
+                    {guides.horizontal !== null && (
+                      <div
+                        className="pointer-events-none absolute left-0 z-30"
+                        style={{
+                          top: guides.horizontal * scale,
+                          height: 2,
+                          width: previewTotalWidth * scale,
+                          backgroundColor: GUIDE_COLOR,
+                          opacity: 1,
+                          boxShadow: `0 0 0 1px ${GUIDE_COLOR}33, 0 0 8px ${GUIDE_COLOR}66`,
+                        }}
+                      />
+                    )}
+                  </div>
+                ) : (
+                  <div className="rounded-3xl border border-dashed border-slate-300 bg-white p-10 text-center text-slate-500">
+                    Хэмжээгээ оруулсны дараа canvas гарна
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -2923,11 +3109,12 @@ export default function EditorShell() {
 
             <div className="mt-5 flex gap-2">
               <button
-                onClick={handleOrder}
                 type="button"
-                className="flex-1 rounded-xl bg-green-600 py-3 font-bold text-white hover:bg-green-700"
+                onClick={handleOrder}
+                disabled={isSendingOrder}
+                className="rounded-xl bg-green-600 px-4 py-3 font-bold text-white disabled:opacity-60"
               >
-                Илгээх
+                {isSendingOrder ? "Илгээж байна..." : "Илгээх"}
               </button>
 
               <button
@@ -2938,6 +3125,78 @@ export default function EditorShell() {
                 Болих
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {showRegister && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60">
+          <div className="w-[360px] rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="mb-4 text-lg font-bold text-slate-900">
+              Бүртгүүлэх
+            </div>
+
+            <div className="space-y-3">
+              <input
+                placeholder="Нэр"
+                value={registerName}
+                onInput={(e) =>
+                  setRegisterName((e.target as HTMLInputElement).value)
+                }
+                className="w-full rounded-xl border border-slate-300 px-3 py-2 outline-none"
+                autoComplete="name"
+              />
+              <input
+                placeholder="Утас"
+                value={registerPhone}
+                onInput={(e) =>
+                  setRegisterPhone((e.target as HTMLInputElement).value)
+                }
+                className="w-full rounded-xl border border-slate-300 px-3 py-2 outline-none"
+                autoComplete="tel"
+              />
+
+              <button
+                type="button"
+                onClick={handleRegister}
+                className="w-full rounded-xl bg-slate-900 py-2 font-semibold text-white"
+              >
+                Илгээх
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowRegister(false)}
+                className="w-full rounded-xl border border-slate-300 py-2 font-semibold text-slate-700"
+              >
+                Хаах
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showAdminModal && (
+        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-xl">
+            <h2 className="text-xl font-bold text-slate-900">
+              AI эрх дууссан байна
+            </h2>
+
+            <p className="mt-3 text-sm text-slate-600">
+              Таны бүртгэлтэй хэрэглэгчийн AI эрх дууссан байна. Эрх нэмүүлэхийн
+              тулд админтай холбогдоно уу.
+            </p>
+
+            <div className="mt-4 rounded-2xl bg-slate-100 p-4 text-sm font-semibold text-slate-800">
+              📞 99012298
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowAdminModal(false)}
+              className="mt-5 w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-bold text-white"
+            >
+              Ойлголоо
+            </button>
           </div>
         </div>
       )}
