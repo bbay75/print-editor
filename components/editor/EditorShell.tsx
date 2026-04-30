@@ -21,7 +21,8 @@ import { createTextElement, createLineElement } from "./editor-elements";
 import { validateDocSize } from "./validate-doc-size";
 import { checkFreeUsage } from "./check-free-usage";
 import { validateBeforeAI } from "./validate-before-ai";
-
+import { buildLayoutElements } from "./apply-layout";
+import { buildDesignerLayout } from "./designer-layout";
 import {
   getRoleLayoutConfig,
   fitFontSizeSmart,
@@ -62,7 +63,6 @@ import {
   AlignRight,
   Bold,
 } from "lucide-react";
-
 function getSafeAreaFitMaxFontSize({
   text,
   widthPx,
@@ -92,24 +92,18 @@ function getSafeAreaFitMaxFontSize({
   const safeRight = docWidth - previewSafe;
   const safeTop = previewSafe;
   const safeBottom = docHeight - previewSafe;
-
   const clampedX = Math.max(currentX, safeLeft);
   const clampedY = Math.max(currentY, safeTop);
-
   const allowedWidth = Math.min(widthPx, safeRight - clampedX);
   const allowedHeight = safeBottom - clampedY;
-
   if (allowedWidth <= 40 || allowedHeight <= 40) {
     return role === "contact" ? 24 : 40;
   }
-
   let low = role === "contact" ? 12 : 16;
   let high = 4000;
   let best = low;
-
   while (low <= high) {
     const mid = Math.floor((low + high) / 2);
-
     const h = measureTextHeightForFont(
       text,
       allowedWidth,
@@ -118,7 +112,6 @@ function getSafeAreaFitMaxFontSize({
       lineHeight,
       fontFamily, // 🔥 ЭНД ДАМЖУУЛЖ БАЙГАА
     );
-
     if (h <= allowedHeight) {
       best = mid;
       low = mid + 1;
@@ -126,7 +119,6 @@ function getSafeAreaFitMaxFontSize({
       high = mid - 1;
     }
   }
-
   return best;
 }
 function Range({
@@ -170,7 +162,6 @@ function Range({
     </label>
   );
 }
-
 function SafeColorInput({
   value,
   onChange,
@@ -183,17 +174,14 @@ function SafeColorInput({
   onStart?: () => void;
 }) {
   const [mounted, setMounted] = useState(false);
-
   useEffect(() => {
     setMounted(true);
   }, []);
-
   if (!mounted) {
     return (
       <div className="h-11 w-full rounded-xl border border-slate-200 bg-white" />
     );
   }
-
   return (
     <input
       type="color"
@@ -201,14 +189,16 @@ function SafeColorInput({
       onPointerDown={onStart}
       onMouseDown={onStart}
       onFocus={onStart}
-      onChange={(e) => onChange(e.target.value)}
+      onChange={(e) => {
+        onChange(e.target.value);
+        onCommit?.();
+      }}
       onBlur={onCommit}
       className="h-11 w-full rounded-xl border border-slate-200 p-1"
       suppressHydrationWarning
     />
   );
 }
-
 export default function EditorShell() {
   const [doc, setDoc] = useState<{
     widthMm: string | number;
@@ -221,28 +211,21 @@ export default function EditorShell() {
     bleedMm: 5,
     safeMm: 20,
   });
-
   const widthInputRef = useRef<HTMLInputElement | null>(null);
   const heightInputRef = useRef<HTMLInputElement | null>(null);
   const [sizeError, setSizeError] = useState<{
     width?: string;
     height?: string;
   }>({});
-
   const [elements, setElements] = useState<EditorElement[]>([]);
   const elementsRef = useRef<EditorElement[]>([]);
-
   const [history, setHistory] = useState<EditorElement[][]>([]);
   const historyRef = useRef<EditorElement[][]>([]);
-
   const [future, setFuture] = useState<EditorElement[][]>([]);
   const futureRef = useRef<EditorElement[][]>([]);
-
   const pendingHistoryRef = useRef<EditorElement[] | null>(null);
-
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [aiPrompt, setAiPrompt] = useState("");
-
   const [generateCount, setGenerateCount] = useState(0);
   const [isRegistered, setIsRegistered] = useState(false);
   const MAX_FREE = 3;
@@ -253,14 +236,12 @@ export default function EditorShell() {
   const [accessUsed, setAccessUsed] = useState<number | null>(null);
   const lastRemainingRef = useRef<number | null>(null);
   const [creditFlash, setCreditFlash] = useState(false);
-
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     setIsKiosk(params.get("kiosk") === "1");
   }, []);
   useEffect(() => {
     const registered = localStorage.getItem("print_editor_user_registered");
-
     if (registered === "1") {
       setShowRegister(false);
     }
@@ -268,7 +249,6 @@ export default function EditorShell() {
   useEffect(() => {
     const registered =
       localStorage.getItem("print_editor_user_registered") === "1";
-
     setIsRegistered(registered);
   }, []);
   useEffect(() => {
@@ -276,12 +256,10 @@ export default function EditorShell() {
       setShowRegister(true);
     }
   }, [generateCount, isRegistered]);
-
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [registerName, setRegisterName] = useState("");
   const [registerPhone, setRegisterPhone] = useState("");
-
   const [scale, setScale] = useState(() => getPreviewScale(2000, 1000));
   const [status, setStatus] = useState("Бэлэн");
   const [isAiLoading, setIsAiLoading] = useState(false);
@@ -294,14 +272,11 @@ export default function EditorShell() {
     vertical: null,
     horizontal: null,
   });
-
   const [orderOpen, setOrderOpen] = useState(false);
   const [isSendingOrder, setIsSendingOrder] = useState(false);
   const [isDraggingElement, setIsDraggingElement] = useState(false);
-
   const [showGuides, setShowGuides] = useState(true);
   const [includeCropMarks, setIncludeCropMarks] = useState(false);
-
   const [settingsPos, setSettingsPos] = useState({ x: 980, y: 220 });
   const settingsDragRef = useRef<{
     startX: number;
@@ -309,10 +284,8 @@ export default function EditorShell() {
     baseX: number;
     baseY: number;
   } | null>(null);
-
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const logoInputRef = useRef<HTMLInputElement | null>(null);
-
   useEffect(() => {
     const saved = Number(
       localStorage.getItem("print_editor_ai_generate_count") || 0,
@@ -321,41 +294,29 @@ export default function EditorShell() {
   }, []);
   useEffect(() => {
     let timer: NodeJS.Timeout | null = null;
-
     const loadAccess = async () => {
       const registered =
         localStorage.getItem("print_editor_user_registered") === "1";
       const phone = localStorage.getItem("user_phone");
-
       if (!registered || !phone) return;
-
       const data = await checkAccess(phone);
-
       const limit = data.limit ?? 3;
       const used = data.used ?? 0;
       const remaining = Math.max(0, limit - used);
-
       const prevRemaining = lastRemainingRef.current;
-
       if (prevRemaining !== null && remaining > prevRemaining) {
         toast.success(`AI эрх нэмэгдлээ. Үлдсэн: ${remaining}`);
-
         setCreditFlash(true);
         setTimeout(() => {
           setCreditFlash(false);
         }, 1500);
       }
-
       lastRemainingRef.current = remaining;
-
       setAccessLimit(limit);
       setAccessUsed(used);
     };
-
     loadAccess();
-
     timer = setInterval(loadAccess, 10000);
-
     return () => {
       if (timer) clearInterval(timer);
     };
@@ -364,54 +325,61 @@ export default function EditorShell() {
     elementsRef.current = JSON.parse(JSON.stringify(elements));
 
     if (elements.length > 0) {
-      localStorage.setItem("print_editor_elements", JSON.stringify(elements));
+      const lightElements = elements.map((el) => {
+        if (el.type === "logo") {
+          return {
+            ...el,
+            src: el.name === "AI BG" ? "" : "",
+          };
+        }
+
+        return el;
+      });
+
+      try {
+        localStorage.setItem(
+          "print_editor_elements",
+          JSON.stringify(lightElements),
+        );
+      } catch (err) {
+        console.warn("localStorage save skipped:", err);
+      }
     }
   }, [elements]);
-
   useEffect(() => {
     historyRef.current = history;
   }, [history]);
-
   useEffect(() => {
     futureRef.current = future;
   }, [future]);
-
   const applyElements = (next: EditorElement[]) => {
     const safeNext = cloneElements(Array.isArray(next) ? next : []);
     elementsRef.current = safeNext;
     setElements(safeNext);
   };
-
   const pushUniqueHistory = (snapshot: EditorElement[]) => {
     const safeSnapshot = cloneElements(snapshot);
     const prev = historyRef.current;
     const last = prev[prev.length - 1];
-
     if (last && sameElements(last, safeSnapshot)) return;
-
     const nextHistory = [...prev.slice(-29), safeSnapshot];
     historyRef.current = nextHistory;
     setHistory(nextHistory);
   };
-
   const captureHistoryStart = () => {
     if (!pendingHistoryRef.current) {
       pendingHistoryRef.current = cloneElements(elementsRef.current);
     }
   };
-
   const commitHistory = () => {
     if (!pendingHistoryRef.current) return;
-
     if (!sameElements(pendingHistoryRef.current, elementsRef.current)) {
       pushUniqueHistory(pendingHistoryRef.current);
       futureRef.current = [];
       setFuture([]);
     }
-
     pendingHistoryRef.current = null;
   };
-
   const pushHistory = (next: EditorElement[]) => {
     pushUniqueHistory(elementsRef.current);
     futureRef.current = [];
@@ -419,41 +387,30 @@ export default function EditorShell() {
     pendingHistoryRef.current = null;
     applyElements(next);
   };
-
   const patchElement = (id: string, patch: Partial<EditorElement>) => {
     const base = Array.isArray(elementsRef.current) ? elementsRef.current : [];
-
     const nextList = base.map((item) => {
       if (item.id !== id) return item;
-
       const next: EditorElement = { ...item, ...patch };
-
       if (patch.x !== undefined) next.xMm = pxToMm(patch.x);
       if (patch.y !== undefined) next.yMm = pxToMm(patch.y);
-
       if (patch.xMm !== undefined) next.x = mmToPx(patch.xMm);
       if (patch.yMm !== undefined) next.y = mmToPx(patch.yMm);
-
       if (patch.width !== undefined) next.widthMm = pxToMm(patch.width);
       if (patch.height !== undefined) next.heightMm = pxToMm(patch.height);
-
       if (patch.widthMm !== undefined) next.width = mmToPx(patch.widthMm);
       if (patch.heightMm !== undefined) next.height = mmToPx(patch.heightMm);
-
       if (next.type === "logo") {
         const aspectRatio = next.aspectRatio ?? 1;
-
         if (patch.width !== undefined && patch.height === undefined) {
           next.height = Math.round(next.width / aspectRatio);
           next.heightMm = pxToMm(next.height);
         }
-
         if (patch.height !== undefined && patch.width === undefined) {
           next.width = Math.round(next.height * aspectRatio);
           next.widthMm = pxToMm(next.width);
         }
       }
-
       if (next.type === "line") {
         const thickness =
           patch.lineThickness ??
@@ -461,18 +418,14 @@ export default function EditorShell() {
           next.lineThickness ??
           next.height ??
           6;
-
         next.lineThickness = thickness;
         next.height = thickness;
         next.heightMm = pxToMm(thickness);
       }
-
       return next;
     });
-
     applyElements(nextList);
   };
-
   const selected = useMemo(
     () =>
       (Array.isArray(elements) ? elements : []).find(
@@ -480,9 +433,7 @@ export default function EditorShell() {
       ) ?? null,
     [elements, selectedId],
   );
-
   const hasValidDocSize = Number(doc.widthMm) > 0 && Number(doc.heightMm) > 0;
-
   const previewCanvasWidth = hasValidDocSize ? mmToPx(Number(doc.widthMm)) : 0;
   const previewCanvasHeight = hasValidDocSize
     ? mmToPx(Number(doc.heightMm))
@@ -491,18 +442,13 @@ export default function EditorShell() {
   const previewSafe = mmToPx(Number(doc.safeMm) || 0);
   const previewTotalWidth = previewCanvasWidth + previewBleed * 2;
   const previewTotalHeight = previewCanvasHeight + previewBleed * 2;
-
   const currentFontSize = selected?.fontSize ?? 40;
-
   const fontSizeControlMin =
     selected?.role === "primary" ? 24 : selected?.role === "contact" ? 14 : 12;
-
   const selectedLogicalX =
     selected?.xMm !== undefined ? mmToPx(selected.xMm) : (selected?.x ?? 0);
-
   const selectedLogicalY =
     selected?.yMm !== undefined ? mmToPx(selected.yMm) : (selected?.y ?? 0);
-
   const selectedLogicalWidth =
     selected?.widthMm !== undefined
       ? mmToPx(selected.widthMm)
@@ -518,129 +464,98 @@ export default function EditorShell() {
           docHeight: previewCanvasHeight,
           previewSafe,
           fontWeight: selected.fontWeight ?? 700,
-
           // ❗ ЭНЭ ХОЁР ЧУХАЛ
           lineHeight: selected.lineHeight ?? 1.2,
           fontFamily: selected.fontFamily,
-
           role: selected.role,
         })
       : 220;
-
   const fontSizeControlMax = Math.max(
     fontSizeControlMin,
     safeAreaFitMaxFontSize,
     Math.ceil(currentFontSize),
   );
-
   const fontSizeControlStep = 1;
   const addText = (role: TextRole = "support") => {
     const el = createTextElement(previewCanvasWidth, "Шинэ текст");
     el.role = role;
-
     const base = Array.isArray(elementsRef.current) ? elementsRef.current : [];
     pushHistory([...base, el]);
     setSelectedId(el.id);
   };
-
   const addLine = () => {
     const el = createLineElement();
-
     const base = Array.isArray(elementsRef.current) ? elementsRef.current : [];
     pushHistory([...base, el]);
     setSelectedId(el.id);
   };
-
   const deleteSelected = () => {
     if (!selectedId) return;
-
     const base = Array.isArray(elementsRef.current) ? elementsRef.current : [];
     const next = base.filter((el) => el.id !== selectedId);
-
     pushHistory(next);
     setSelectedId(null);
   };
-
   const changeRole = (role: TextRole) => {
     if (!selected) {
       addText(role);
       return;
     }
-
     captureHistoryStart();
-
     const base = Array.isArray(elementsRef.current) ? elementsRef.current : [];
     const next = base.map((el) =>
       el.id === selected.id ? { ...el, role } : el,
     );
-
     applyElements(next);
     commitHistory();
   };
-
   const updateSelected = (patch: Partial<EditorElement>) => {
     if (!selectedId) return;
-
-    captureHistoryStart(); // 🔥 START
+    captureHistoryStart();
     patchElement(selectedId, patch);
-    commitHistory(); // 🔥 END
   };
-
   const beginSelectedEdit = () => {
     if (!selectedId) return;
     captureHistoryStart();
   };
-
   const finishSelectedEdit = () => {
     commitHistory();
   };
-
   const undo = () => {
     const prevHistory = historyRef.current;
     const last = prevHistory[prevHistory.length - 1];
     if (!last) return;
-
     const current = cloneElements(elementsRef.current);
     const nextFuture = [current, ...futureRef.current];
-
     futureRef.current = nextFuture;
     setFuture(nextFuture);
-
     const nextHistory = prevHistory.slice(0, -1);
     historyRef.current = nextHistory;
     setHistory(nextHistory);
-
     pendingHistoryRef.current = null;
     setSelectedId(null);
     applyElements(last);
   };
-
   const redo = () => {
     const next = futureRef.current[0];
     if (!next) return;
-
     const current = cloneElements(elementsRef.current);
     const nextHistory = [...historyRef.current, current];
     const nextFuture = futureRef.current.slice(1);
-
     historyRef.current = nextHistory;
     futureRef.current = nextFuture;
-
     setHistory(nextHistory);
     setFuture(nextFuture);
-
     pendingHistoryRef.current = null;
     setSelectedId(null);
     applyElements(next);
   };
-
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const active = document.activeElement as HTMLElement | null;
       const tag = active?.tagName?.toLowerCase();
       const isTyping =
         tag === "textarea" || tag === "input" || active?.isContentEditable;
-
       if (
         (e.key === "Delete" || e.key === "Backspace") &&
         selectedId &&
@@ -650,11 +565,9 @@ export default function EditorShell() {
         deleteSelected();
         return;
       }
-
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
         e.stopPropagation();
-
         if (e.shiftKey) {
           redo();
         } else {
@@ -662,14 +575,12 @@ export default function EditorShell() {
         }
         return;
       }
-
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
         e.preventDefault();
         e.stopPropagation();
         redo();
       }
     };
-
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
   }, [selectedId]);
@@ -681,11 +592,9 @@ export default function EditorShell() {
       .split("\n")
       .map((s) => s.trim())
       .filter(Boolean);
-
     let headline = "";
     let subtitle = "";
     let cta = "";
-
     for (const line of lines) {
       if (!headline && /гарчиг|headline|голд нь/i.test(line)) {
         const cleaned = line
@@ -695,7 +604,6 @@ export default function EditorShell() {
           .trim();
         if (cleaned) headline = cleaned;
       }
-
       if (!subtitle && /доор нь|subtitle|coffee|dessert|brunch/i.test(line)) {
         const cleaned = line
           .replace(/.*?(доор нь|subtitle)\s*/i, "")
@@ -704,7 +612,6 @@ export default function EditorShell() {
           .trim();
         if (cleaned) subtitle = cleaned;
       }
-
       if (!cta && /утас|phone|call/i.test(line)) {
         const cleaned = line
           .replace(/.*?(утас|phone|call)\s*[:：]?\s*/i, "")
@@ -712,37 +619,30 @@ export default function EditorShell() {
         if (cleaned) cta = /^утас/i.test(line) ? `Утас: ${cleaned}` : cleaned;
       }
     }
-
     if (!headline) {
       const m = prompt.match(/([A-ZА-ЯӨҮЁ][A-ZА-ЯӨҮЁa-zа-яөүё\s]{3,40})/);
       if (m) headline = m[1].trim();
     }
-
     if (!subtitle) {
       const m = prompt.match(
         /(Coffee.*|Dessert.*|Brunch.*|Coffee\s*[•*·-]\s*Dessert.*)/i,
       );
       if (m) subtitle = m[1].replace(/\s+/g, " ").trim();
     }
-
     if (!cta) {
       const m = prompt.match(/(\d{6,12})/);
       if (m) cta = `Утас: ${m[1]}`;
     }
-
     return { headline, subtitle, cta };
   };
   const getDeviceId = () => {
     let id = localStorage.getItem("print_editor_device_id");
-
     if (!id) {
       id = crypto.randomUUID();
       localStorage.setItem("print_editor_device_id", id);
     }
-
     return id;
   };
-
   const runAiText = async () => {
     const userPhone = localStorage.getItem("user_phone");
     // ✅ 1. Бүртгэлтэй хэрэглэгч бол Supabase users credit шалгана
@@ -758,7 +658,6 @@ export default function EditorShell() {
     }
     // ✅ 2. Бүртгэлгүй хэрэглэгч бол local count шалгана
     const canUseFree = checkFreeUsage(isRegistered, generateCount, MAX_FREE);
-
     if (!canUseFree) {
       toast.error("Үнэгүй ашиглалт дууслаа...");
       setShowRegister(true);
@@ -768,11 +667,9 @@ export default function EditorShell() {
       width: doc.widthMm,
       height: doc.heightMm,
     });
-
     const { isValid, errors, widthValue, heightValue } = validateBeforeAI(doc);
     if (!isValid) {
       setSizeError(errors);
-
       toast.error(
         !errors.width && !errors.height
           ? "Өргөн, өндрийн хэмжээгээ оруулна уу"
@@ -780,17 +677,13 @@ export default function EditorShell() {
             ? errors.width
             : errors.height!,
       );
-
       const target = !widthValue
         ? widthInputRef.current
         : heightInputRef.current;
-
       target?.scrollIntoView({ behavior: "smooth", block: "center" });
-
       setTimeout(() => {
         target?.focus();
       }, 150);
-
       return;
     }
     const widthMm = parseMm(widthValue);
@@ -799,16 +692,13 @@ export default function EditorShell() {
       toast.error("AI prompt оруулна уу.");
       return;
     }
-
     try {
       setIsAiLoading(true);
       setStatus("AI дизайн үүсгэж байна...");
-
       surfaceRef.current?.scrollIntoView({
         behavior: "smooth",
         block: "center",
       });
-
       const res = await fetch("/api/ai/text", {
         method: "POST",
         headers: {
@@ -820,10 +710,15 @@ export default function EditorShell() {
           heightMm,
         }),
       });
-
       const data = await res.json();
       setAiTips(Array.isArray(data.tips) ? data.tips : []);
-      const nextLayoutType = layoutType;
+      const nextLayoutType =
+        data.layoutType === "center" ||
+        data.layoutType === "top-heavy" ||
+        data.layoutType === "hero" ||
+        data.layoutType === "split"
+          ? data.layoutType
+          : layoutType;
 
       setLayoutType(nextLayoutType);
       if (!res.ok) {
@@ -832,8 +727,7 @@ export default function EditorShell() {
         setStatus("AI алдаа");
         return;
       }
-
-      const nextElements = buildAiElements({
+      const nextElements = buildLayoutElements({
         data,
         widthMm,
         heightMm,
@@ -841,53 +735,41 @@ export default function EditorShell() {
         previewCanvasHeight,
         previewSafe,
         layoutType: nextLayoutType,
-      }) as EditorElement[];
-
+      });
       const safeLeft = previewSafe;
       const safeTop = previewSafe;
       const safeRight = previewCanvasWidth - previewSafe;
       const safeBottom = previewCanvasHeight - previewSafe;
-
       const safeElements = Array.isArray(elementsRef.current)
         ? elementsRef.current
         : [];
-
       const userLogos = safeElements.filter(
         (e) => e.type === "logo" && e.name !== "AI BG",
       );
-
       const bg = nextElements.find((e) => e.name === "AI BG");
       const textEls = nextElements.filter((e) => e.name !== "AI BG");
-
       const next = bg
         ? [bg, ...textEls, ...userLogos]
         : [...textEls, ...userLogos];
-
       next.forEach((el) => {
         if (el.name === "AI BG") return;
         if (!el.width || !el.height) return;
-
         if (el.x < safeLeft) el.x = safeLeft;
         if (el.x + el.width > safeRight) {
           el.x = safeRight - el.width;
         }
-
         if (el.y < safeTop) el.y = safeTop;
         if (el.y + el.height > safeBottom) {
           el.y = safeBottom - el.height;
         }
-
         el.xMm = pxToMm(el.x);
         el.yMm = pxToMm(el.y);
       });
-
       pushHistory(next);
       setSelectedId(textEls[0]?.id ?? userLogos[0]?.id ?? null);
       setStatus("AI дизайн бэлэн");
-
       if (!isRegistered) {
         const deviceId = getDeviceId();
-
         const usageRes = await fetch("/api/free-usage", {
           method: "POST",
           headers: {
@@ -895,22 +777,16 @@ export default function EditorShell() {
           },
           body: JSON.stringify({ deviceId }),
         });
-
         const usageData = await usageRes.json();
-
         // ❗ ЭНЭ Л ЧУХАЛ
         const usedCount = usageData.used_count;
-
         setGenerateCount((prev) => Math.max(prev, usedCount));
-
         localStorage.setItem(
           "print_editor_ai_generate_count",
           String(usedCount),
         );
-
         toast.success(`Үлдсэн: ${Math.max(0, MAX_FREE - usedCount)} удаа`);
       }
-
       // ✅ зөвхөн бүртгэлтэй хэрэглэгч дээр credit хасна
       const registeredPhone = localStorage.getItem("user_phone");
       const registeredNow =
@@ -923,9 +799,7 @@ export default function EditorShell() {
           },
           body: JSON.stringify({ phone: registeredPhone }),
         });
-
         const creditData = await creditRes.json();
-
         if (creditData.ok) {
           setAccessLimit(creditData.limit ?? accessLimit ?? 3);
           setAccessUsed(creditData.used ?? accessUsed ?? 0);
@@ -946,243 +820,30 @@ export default function EditorShell() {
       setIsAiLoading(false);
     }
   };
-
   const applyLayout = (type: LayoutType) => {
     setLayoutType(type);
-
-    const next = cloneElements(elementsRef.current);
-
-    const safeLeft = previewSafe;
-    const safeTop = previewSafe;
-    const safeRight = previewCanvasWidth - previewSafe;
-    const safeBottom = previewCanvasHeight - previewSafe;
-    const safeWidth = safeRight - safeLeft;
-    const safeHeight = safeBottom - safeTop;
-
-    const textEls = next
-      .filter((el) => el.type === "text")
-      .sort((a, b) => {
-        const order: TextRole[] = [
-          "primary",
-          "secondary",
-          "support",
-          "contact",
-        ];
-        return (
-          order.indexOf(a.role ?? "support") -
-          order.indexOf(b.role ?? "support")
-        );
-      });
-
-    if (textEls.length === 0) return;
-
-    const getStyle = (role: TextRole) => {
-      const base = getRoleLayoutConfig(
-        role,
-        previewCanvasWidth,
-        previewCanvasHeight,
-      );
-
-      return {
-        ...base,
-
-        fontBoost:
-          role === "primary"
-            ? 1.0
-            : role === "secondary"
-              ? 0.7
-              : role === "support"
-                ? 0.8
-                : 0.6,
-
-        maxWidth:
-          role === "primary"
-            ? "80%"
-            : role === "secondary"
-              ? "70%"
-              : role === "support"
-                ? "65%"
-                : "60%",
-
-        whiteSpace: "pre-wrap",
-        wordBreak: "break-word",
-        textAlign: "center",
-
-        fontWeight:
-          role === "primary"
-            ? 900
-            : role === "support"
-              ? 800
-              : role === "secondary"
-                ? 700
-                : 600,
-      };
-    };
-
-    let gap = previewCanvasHeight * 0.028;
-    let boxWidth = safeWidth;
-    let boxX = safeLeft;
-    let align: "left" | "center" | "right" = "center";
-
-    if (type === "center") {
-      gap = previewCanvasHeight * 0.025;
-      boxWidth = safeWidth * 0.86;
-      boxX = safeLeft + (safeWidth - boxWidth) / 2;
-      align = "center";
-    }
-
-    if (type === "top-heavy") {
-      gap = previewCanvasHeight * 0.012;
-      boxWidth = safeWidth * 0.9;
-      boxX = safeLeft + (safeWidth - boxWidth) / 2;
-      align = "center";
-    }
-
-    if (type === "hero") {
-      gap = previewCanvasHeight * 0.012;
-      boxWidth = safeWidth * 0.94;
-      boxX = safeLeft + (safeWidth - boxWidth) / 2;
-      align = "center";
-    }
-
-    if (type === "split") {
-      gap = previewCanvasHeight * 0.014;
-      boxWidth = safeWidth * 0.48;
-      boxX = safeLeft + safeWidth * 0.04;
-      align = "left";
-    }
-
-    textEls.forEach((el) => {
-      const role = el.role ?? "support";
-      const style = getStyle(role);
-
-      el.width = boxWidth;
-
-      const estimatedHeight = measureTextHeightForFont(
-        el.text ?? "",
-        boxWidth,
-        Math.round(
-          fitFontSizeSmart(
-            el.text ?? "",
-            role,
-            boxWidth,
-            style.boxHeight,
-            previewCanvasWidth,
-            previewCanvasHeight,
-          ) * style.fontBoost,
-        ),
-        style.fontWeight,
-        style.lineHeight,
-        el.fontFamily,
-      );
-
-      const maxAllowedHeight = previewCanvasHeight * 0.25;
-
-      let finalFont =
-        fitFontSizeSmart(
-          el.text ?? "",
-          role,
-          boxWidth,
-          style.boxHeight,
-          previewCanvasWidth,
-          previewCanvasHeight,
-        ) * style.fontBoost;
-
-      // 🔥 dominance
-      if (role === "primary") finalFont *= 1.25;
-      else if (role === "secondary") finalFont *= 0.95;
-      else if (role === "support") finalFont *= 0.9;
-      else if (role === "contact") finalFont *= 0.85;
-
-      // 🔥 overflow fix
-      while (estimatedHeight > maxAllowedHeight && finalFont > 10) {
-        finalFont *= 0.92;
-      }
-
-      el.fontSize = Math.round(finalFont);
-
-      el.height = Math.max(style.boxHeight, estimatedHeight);
-      el.fontWeight = style.fontWeight;
-      el.lineHeight = style.lineHeight;
-      el.textShadow =
-        role === "primary"
-          ? "0 6px 20px rgba(0,0,0,0.6)"
-          : "0 2px 8px rgba(0,0,0,0.28)";
-
-      el.fontSize = Math.round(finalFont);
+    const next = buildDesignerLayout({
+      elements: elementsRef.current,
+      type,
+      previewCanvasWidth,
+      previewCanvasHeight,
+      previewSafe,
     });
-    let safeGap = Math.max(
-      previewCanvasHeight * 0.02,
-      previewCanvasHeight / (textEls.length * 6),
-    );
-    const maxLines = 4;
-
-    if (textEls.length > maxLines) {
-      // gap-ийг багасгана
-      safeGap *= 0.7;
-    }
-
-    const totalHeight =
-      textEls.reduce((sum, el) => sum + el.height, 0) +
-      safeGap * Math.max(0, textEls.length - 1);
-
-    let y = safeTop + (safeHeight - totalHeight) / 2;
-
-    if (type === "top-heavy") {
-      y = safeTop + previewCanvasHeight * 0.055;
-    }
-
-    if (type === "hero") {
-      y = safeTop + previewCanvasHeight * 0.12;
-    }
-
-    if (type === "split") {
-      y = safeTop + (safeHeight - totalHeight) / 2;
-    }
-
-    y = clamp(y, safeTop, safeBottom - totalHeight);
-
-    textEls.forEach((el) => {
-      el.x = boxX;
-      el.y = y;
-      el.textAlign = align;
-
-      if (type === "split") {
-        el.position = "center-left";
-      } else if (type === "top-heavy") {
-        el.position = "top-center";
-      } else {
-        el.position = "center";
-      }
-
-      el.xMm = pxToMm(el.x);
-      el.yMm = pxToMm(el.y);
-      el.widthMm = pxToMm(el.width);
-      el.heightMm = pxToMm(el.height);
-
-      y += el.height + safeGap;
-    });
-
     pushHistory(next);
   };
-
   const resetSession = () => {
     localStorage.removeItem("print_editor_user_registered");
     localStorage.removeItem("user_phone");
     localStorage.removeItem("print_editor_ai_generate_count");
-
     setGenerateCount(0);
     setShowRegister(true);
-
     toast.success("Шинэ хэрэглэгч эхэллээ");
   };
-
   const handleRegister = async () => {
     if (!registerName.trim() || !registerPhone.trim()) {
       toast.error("Нэр, утсаа оруулна уу");
       return;
     }
-
     try {
       const data = await registerUser(
         registerName.trim(),
@@ -1190,12 +851,10 @@ export default function EditorShell() {
       );
       localStorage.setItem("print_editor_user_registered", "1");
       localStorage.setItem("user_phone", registerPhone.trim());
-
       setIsRegistered(true);
       setShowRegister(false);
       setRegisterName("");
       setRegisterPhone("");
-
       toast.success(
         data.alreadyExists
           ? "Бүртгэлтэй хэрэглэгчээр нэвтэрлээ"
@@ -1208,16 +867,13 @@ export default function EditorShell() {
   };
   const handleLogoUpload = async (file: File) => {
     const reader = new FileReader();
-
     reader.onload = () => {
       const img = new Image();
-
       img.onload = () => {
         const maxWidth = 320;
         const aspectRatio = img.width / img.height;
         const width = maxWidth;
         const height = Math.round(width / aspectRatio);
-
         const logoElement: EditorElement = {
           id: makeId(),
           type: "logo",
@@ -1236,7 +892,6 @@ export default function EditorShell() {
           aspectRatio,
           borderRadius: 0,
         };
-
         const safeElements = Array.isArray(elementsRef.current)
           ? elementsRef.current
           : [];
@@ -1248,13 +903,10 @@ export default function EditorShell() {
           logoInputRef.current.value = "";
         }
       };
-
       img.src = String(reader.result);
     };
-
     reader.readAsDataURL(file);
   };
-
   const buildExportPayload = (
     measuredElements: EditorElement[],
     preferCmyk = false,
@@ -1305,15 +957,12 @@ export default function EditorShell() {
   });
   const buildPreviewImage = async () => {
     if (!surfaceRef.current) return null;
-
     const dataUrl = await toPng(surfaceRef.current, {
       cacheBust: true,
       pixelRatio: 3, // 🔥 өмнө 2 байсан → 3 болго
     });
-
     return dataUrl;
   };
-
   const handleOrder = async () => {
     if (isSendingOrder) return;
     if (!surfaceRef.current) {
@@ -1326,9 +975,7 @@ export default function EditorShell() {
         alert("Preview surface олдсонгүй");
         return;
       }
-
       setStatus("PDF үүсгэж байна...");
-
       const measuredElements = elements.map((el) => {
         const node = document.querySelector(
           `[data-element-id="${el.id}"]`,
@@ -1337,10 +984,8 @@ export default function EditorShell() {
         if (!node || !surfaceRef.current) {
           return el;
         }
-
         const rect = node.getBoundingClientRect();
         const parentRect = surfaceRef.current.getBoundingClientRect();
-
         return {
           ...el,
           pdfLeftPx: rect.left - parentRect.left,
@@ -1349,7 +994,6 @@ export default function EditorShell() {
           pdfHeightPx: rect.height,
         };
       });
-
       const pdfRes = await fetch("/api/export-pdf", {
         method: "POST",
         headers: {
@@ -1360,36 +1004,28 @@ export default function EditorShell() {
       if (!pdfRes.ok) {
         throw new Error("PDF export failed");
       }
-
       const pdfBlob = await pdfRes.blob();
-
       const previewPng = await toPng(surfaceRef.current, {
         cacheBust: true,
         pixelRatio: 2,
       });
-
       const previewBlob = await (await fetch(previewPng)).blob();
-
       setStatus("Имэйл илгээж байна...");
-
       const formData = new FormData();
       formData.append("name", name);
       formData.append("phone", phone);
       formData.append("file", pdfBlob, "design-print.pdf");
       formData.append("preview", previewBlob, "preview.png");
-
       const orderRes = await fetch("/api/send-order", {
         method: "POST",
         body: formData,
       });
-
       if (!orderRes.ok) {
         const errData = await orderRes.json().catch(() => null);
         throw new Error(errData?.error || "Send order failed");
       }
       setStatus("Амжилттай илгээгдлээ ✅");
       toast.success("Амжилттай илгээгдлээ ✅");
-
       setOrderOpen(false);
       setName("");
       setPhone("");
@@ -1401,7 +1037,6 @@ export default function EditorShell() {
       setIsSendingOrder(false);
     }
   };
-
   const exportToPDF = async () => {
     try {
       setStatus("PDF үүсгэж байна...");
@@ -1410,17 +1045,13 @@ export default function EditorShell() {
         alert("Preview surface олдсонгүй");
         return;
       }
-
       const measuredElements = elements.map((el) => {
         const node = document.querySelector(
           `[data-element-id="${el.id}"]`,
         ) as HTMLElement | null;
-
         if (!node) return el;
-
         const rect = node.getBoundingClientRect();
         const parentRect = surfaceRef.current!.getBoundingClientRect();
-
         return {
           ...el,
           pdfLeftPx: rect.left - parentRect.left,
@@ -1429,7 +1060,6 @@ export default function EditorShell() {
           pdfHeightPx: rect.height,
         };
       });
-
       const res = await fetch("/api/export-pdf", {
         method: "POST",
         headers: {
@@ -1441,52 +1071,41 @@ export default function EditorShell() {
       if (!res.ok) {
         throw new Error("PDF export failed");
       }
-
       const blob = await res.blob();
-
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
       a.download = "design.pdf";
       a.click();
-
       setStatus("PDF бэлэн ✅");
     } catch (err) {
       console.error(err);
       setStatus("PDF алдаа ❌");
     }
   };
-
   const handleSettingsPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
-
     settingsDragRef.current = {
       startX: e.clientX,
       startY: e.clientY,
       baseX: settingsPos.x,
       baseY: settingsPos.y,
     };
-
     (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
   };
-
   const handleSettingsPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!settingsDragRef.current) return;
-
     const dx = e.clientX - settingsDragRef.current.startX;
     const dy = e.clientY - settingsDragRef.current.startY;
-
     setSettingsPos({
       x: settingsDragRef.current.baseX + dx,
       y: settingsDragRef.current.baseY + dy,
     });
   };
-
   const handleSettingsPointerUp = () => {
     settingsDragRef.current = null;
   };
-
   return (
     <main
       className="min-h-screen bg-slate-100 text-slate-900"
@@ -1503,11 +1122,16 @@ export default function EditorShell() {
             Таны санаанд тулгуурлан текст, өнгө болон зохиомжийг автоматаар
             үүсгэнэ.
           </p>
-
           <textarea
             value={aiPrompt}
             onChange={(e) => setAiPrompt(e.target.value)}
-            placeholder="Санаагаа бичнэ үү… (жишээ: кофе шоп постер, бор фон, алтлаг бичигтэй, гарчиг дээд хэсэгт, Дуудах текстүүдийг доор, дээр, дунд, зүүн, баруун, зүүн доор гэх мэт байршил зааж өг...)"
+            placeholder="Санаагаа бичнэ үү…
+
+Жишээ:
+кофе шоп постер, бор дэвсгэр, алтлаг бичиг.
+САРАН КАФЕ гарчигтай.
+Coffee * Dessert * Brunch.
+Утас: 99112233....)"
             className="mt-4 min-h-36 w-full rounded-2xl border border-slate-200 p-3 text-sm outline-none transition focus:border-blue-500"
           />
           {!isKiosk && (
@@ -1539,7 +1163,6 @@ export default function EditorShell() {
               )}
             </div>
           )}
-
           <button
             onClick={runAiText}
             type="button"
@@ -1553,7 +1176,6 @@ export default function EditorShell() {
               ? "Бүртгүүлж үргэлжлүүлэх"
               : "AI текст үүсгэх"}
           </button>
-
           {isKiosk && (
             <button
               type="button"
@@ -1563,7 +1185,6 @@ export default function EditorShell() {
               🔄 Шинэ хэрэглэгч
             </button>
           )}
-
           {aiTips.length > 0 && (
             <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4">
               <div className="text-sm font-bold text-amber-900">
@@ -1583,7 +1204,6 @@ export default function EditorShell() {
             <p className="mt-1 text-sm text-slate-500">
               Document-ийн бодит хэмжээг мм-ээр оруулна.
             </p>
-
             <div className="mt-4 grid grid-cols-2 gap-3">
               <label className="grid gap-1.5 text-sm">
                 <span>Өргөн (mm)</span>
@@ -1615,9 +1235,7 @@ export default function EditorShell() {
                       }));
                       return;
                     }
-
                     const mm = parseMm(raw);
-
                     setDoc((prev) => ({
                       ...prev,
                       widthMm:
@@ -1666,9 +1284,7 @@ export default function EditorShell() {
                       }));
                       return;
                     }
-
                     const mm = parseMm(raw);
-
                     setDoc((prev) => ({
                       ...prev,
                       heightMm:
@@ -1712,7 +1328,6 @@ export default function EditorShell() {
                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none"
                 />
               </label>
-
               <label className="grid gap-1 text-sm">
                 <span>Аюулгүй бүс (mm)</span>
                 <input
@@ -1738,13 +1353,11 @@ export default function EditorShell() {
               </label>
             </div>
           </div>
-
           <div className="mt-8 border-t border-slate-200 pt-6">
             <div className="text-lg font-bold text-slate-900">Лого оруулах</div>
             <p className="mt-1 text-sm text-slate-500">
               PNG, JPG логогоо canvas дээр нэмнэ.
             </p>
-
             <input
               ref={logoInputRef}
               type="file"
@@ -1755,7 +1368,6 @@ export default function EditorShell() {
                 if (file) handleLogoUpload(file);
               }}
             />
-
             <button
               onClick={() => logoInputRef.current?.click()}
               type="button"
@@ -1764,12 +1376,10 @@ export default function EditorShell() {
               <ImagePlus className="h-4 w-4" />
               Лого upload
             </button>
-
             <div className="mt-6 rounded-2xl bg-slate-50 p-4 text-sm text-slate-700">
               <div className="font-semibold text-slate-900">
                 Харагдац ба экспорт
               </div>
-
               <label className="mt-3 flex items-center gap-2">
                 <input
                   type="checkbox"
@@ -1778,7 +1388,6 @@ export default function EditorShell() {
                 />
                 <span>Чиглүүлэгч шугам харуулах</span>
               </label>
-
               <label className="mt-3 flex items-center gap-2">
                 <input
                   type="checkbox"
@@ -1787,13 +1396,11 @@ export default function EditorShell() {
                 />
                 <span>Тайрах тэмдэг оруулах</span>
               </label>
-
               <p className="mt-3 text-xs text-slate-500">
                 Чиглүүлэгч шугам нь зөвхөн edit дээр харагдана. Тайрах тэмдэг нь
                 PDF дээр хүсвэл л орно.
               </p>
             </div>
-
             <div className="mt-6 rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
               <div className="font-semibold text-slate-900">Төлөв</div>
               <div className="mt-1">{status}</div>
@@ -1809,7 +1416,6 @@ export default function EditorShell() {
             </div>
           </div>
         </aside>
-
         <section
           className="min-w-0 rounded-3xl bg-white p-3 shadow-sm md:p-4"
           onPointerDown={(e) => {
@@ -1826,7 +1432,7 @@ export default function EditorShell() {
               }
             }}
           >
-            <div className="sticky top-2 z-20 mx-auto mb-4 w-full max-w-[900px] rounded-2xl border border-slate-200 bg-white/95 px-3 py-2 shadow-lg backdrop-blur">
+            <div className="sticky top-2 z-[100] pointer-events-auto mx-auto mb-4 w-full max-w-[900px] rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-lg">
               <div className="flex flex-wrap items-center justify-center gap-2">
                 <ToolbarButton icon={Undo2} label="Буцаах" onClick={undo} />
                 <ToolbarButton icon={Redo2} label="Дахин" onClick={redo} />
@@ -1840,9 +1446,7 @@ export default function EditorShell() {
                   label="Шугам"
                   onClick={addLine}
                 /> */}
-
                 <div className="mx-1 hidden h-8 w-px bg-slate-200 md:block" />
-
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() =>
@@ -1853,11 +1457,9 @@ export default function EditorShell() {
                   >
                     <Minus className="h-4 w-4" />
                   </button>
-
                   <span className="min-w-14 text-center text-sm font-semibold">
                     {Math.round(scale * 100)}%
                   </span>
-
                   <button
                     onClick={() => setScale((prev) => Math.min(prev + 0.01, 3))}
                     type="button"
@@ -1873,21 +1475,18 @@ export default function EditorShell() {
                   >
                     Center
                   </button>
-
                   <button
                     onClick={() => applyLayout("top-heavy")}
                     className="rounded-xl border px-3 py-1 text-sm"
                   >
                     Top
                   </button>
-
                   <button
                     onClick={() => applyLayout("hero")}
                     className="rounded-xl border px-3 py-1 text-sm"
                   >
                     Hero
                   </button>
-
                   <button
                     onClick={() => applyLayout("split")}
                     className="rounded-xl border px-3 py-1 text-sm"
@@ -1895,13 +1494,11 @@ export default function EditorShell() {
                     Split
                   </button>
                 </div>
-
                 <ToolbarButton
                   icon={Printer}
                   label="PDF"
                   onClick={exportToPDF}
                 />
-
                 <ToolbarButton
                   icon={Printer}
                   label="Хэвлүүлэх"
@@ -1910,7 +1507,6 @@ export default function EditorShell() {
                 />
               </div>
             </div>
-
             <div
               className="relative mx-auto flex min-h-[60vh] w-full items-start justify-start overflow-x-auto overflow-y-visible pt-14 md:justify-center"
               onPointerDown={(e) => {
@@ -1937,7 +1533,6 @@ export default function EditorShell() {
                     }}
                   />
                 )}
-
                 {showGuides && (
                   <div
                     className="pointer-events-none absolute z-20 border-2 border-dashed border-blue-500"
@@ -1971,7 +1566,6 @@ export default function EditorShell() {
                         boxShadow: `inset 0 0 0 ${previewBleed * scale}px rgba(239, 68, 68, 0.06)`,
                       }}
                     />
-
                     {isAiLoading && (
                       <div className="absolute inset-0 z-[80] flex flex-col items-center justify-center rounded-[30px] bg-white/80 backdrop-blur-sm">
                         <div className="h-10 w-10 animate-spin rounded-full border-4 border-slate-300 border-t-blue-600" />
@@ -1980,7 +1574,6 @@ export default function EditorShell() {
                         </div>
                       </div>
                     )}
-
                     {(Array.isArray(elements) ? elements : []).map((item) => (
                       <CanvasItem
                         key={item.id}
@@ -2025,7 +1618,6 @@ export default function EditorShell() {
                         }}
                       />
                     ))}
-
                     {guides.vertical !== null && (
                       <div
                         className="pointer-events-none absolute top-0 z-30"
@@ -2039,7 +1631,6 @@ export default function EditorShell() {
                         }}
                       />
                     )}
-
                     {guides.horizontal !== null && (
                       <div
                         className="pointer-events-none absolute left-0 z-30"
@@ -2064,10 +1655,9 @@ export default function EditorShell() {
           </div>
         </section>
       </div>
-
       {selected && !isDraggingElement && (
         <div
-          className="fixed z-40 w-[300px] rounded-3xl border border-slate-200 bg-white/95 shadow-2xl backdrop-blur"
+          className="fixed z-[200] w-[300px] rounded-3xl border border-slate-200 bg-white/95 shadow-2xl backdrop-blur"
           style={{
             left: settingsPos.x,
             top: settingsPos.y,
@@ -2085,7 +1675,6 @@ export default function EditorShell() {
               <Move className="h-4 w-4" />
               Тохиргоо
             </div>
-
             <button
               onPointerDown={(e) => {
                 e.preventDefault();
@@ -2103,7 +1692,6 @@ export default function EditorShell() {
               <X className="h-4 w-4" />
             </button>
           </div>
-
           <div className="p-4">
             <div className="grid gap-3">
               {(selected.type === "text" || selected.type === "line") && (
@@ -2117,7 +1705,6 @@ export default function EditorShell() {
                   />
                 </label>
               )}
-
               {selected.type === "text" && (
                 <>
                   <label className="grid gap-1 text-sm">
@@ -2140,7 +1727,6 @@ export default function EditorShell() {
                       }}
                     />
                   </label>
-
                   <div className="mt-2 flex items-center gap-2">
                     {[
                       { value: "left", icon: AlignLeft, label: "left" },
@@ -2178,7 +1764,6 @@ export default function EditorShell() {
                         <Icon className="h-4 w-4" />
                       </button>
                     ))}
-
                     <button
                       onClick={() => {
                         const base = Array.isArray(elementsRef.current)
@@ -2209,7 +1794,6 @@ export default function EditorShell() {
                       <Bold className="h-4 w-4" />
                     </button>
                   </div>
-
                   <div className="mt-3">
                     <Range
                       label="Мөр хооронд зай"
@@ -2224,7 +1808,6 @@ export default function EditorShell() {
                       onCommit={finishSelectedEdit}
                     />
                   </div>
-
                   <Range
                     label="Үсгийн хэмжээ (px)"
                     value={selected.fontSize ?? 40}
@@ -2242,7 +1825,6 @@ export default function EditorShell() {
                   />
                 </>
               )}
-
               {selected.type === "line" && (
                 <>
                   <Range
@@ -2267,7 +1849,6 @@ export default function EditorShell() {
                   />
                 </>
               )}
-
               {selected.type === "logo" && (
                 <Range
                   label="Өргөн"
@@ -2279,7 +1860,6 @@ export default function EditorShell() {
                   onCommit={finishSelectedEdit}
                 />
               )}
-
               <Range
                 label="Тунгалагшил"
                 value={(selected.opacity ?? 1) * 100}
@@ -2294,26 +1874,22 @@ export default function EditorShell() {
           </div>
         </div>
       )}
-
       {orderOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
             <h2 className="text-xl font-bold">Захиалга илгээх</h2>
-
             <input
               placeholder="Нэр"
               value={name}
               onChange={(e) => setName(e.target.value)}
               className="mt-4 w-full rounded-xl border border-slate-200 p-3"
             />
-
             <input
               placeholder="Утас"
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               className="mt-3 w-full rounded-xl border border-slate-200 p-3"
             />
-
             <div className="mt-5 flex gap-2">
               <button
                 type="button"
@@ -2323,7 +1899,6 @@ export default function EditorShell() {
               >
                 {isSendingOrder ? "Илгээж байна..." : "Илгээх"}
               </button>
-
               <button
                 onClick={() => setOrderOpen(false)}
                 type="button"
@@ -2341,7 +1916,6 @@ export default function EditorShell() {
             <div className="mb-4 text-lg font-bold text-slate-900">
               Бүртгүүлэх
             </div>
-
             <div className="space-y-3">
               <input
                 placeholder="Нэр"
@@ -2361,7 +1935,6 @@ export default function EditorShell() {
                 className="w-full rounded-xl border border-slate-300 px-3 py-2 outline-none"
                 autoComplete="tel"
               />
-
               <button
                 type="button"
                 onClick={handleRegister}
@@ -2369,7 +1942,6 @@ export default function EditorShell() {
               >
                 Илгээх
               </button>
-
               <button
                 type="button"
                 onClick={() => setShowRegister(false)}

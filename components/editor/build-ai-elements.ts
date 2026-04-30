@@ -166,12 +166,20 @@ export function buildAiElements({
     );
 
     const boxHeight = cfg.boxHeight;
-    const boxWidth = safeWidth;
+    const avgCharWidth = previewCanvasWidth * 0.02;
+
+    const estimatedWidth = rawText.length * avgCharWidth;
+
+    const boxWidth = clamp(
+      estimatedWidth,
+      previewCanvasWidth * 0.25,
+      safeWidth * 0.9,
+    );
 
     const safeFontSize = fitFontSizeSmart(
       rawText,
       mappedRole,
-      safeWidth,
+      boxWidth,
       boxHeight,
       previewCanvasWidth,
       previewCanvasHeight,

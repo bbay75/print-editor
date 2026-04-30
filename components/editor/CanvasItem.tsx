@@ -1,9 +1,42 @@
 "use client";
 
-import React, { useLayoutEffect, useRef } from "react";
+import React, { memo, useLayoutEffect, useRef } from "react";
 import { Move, Trash2 } from "lucide-react";
 import type { EditorElement, ElementType } from "./editor-types";
 import { SNAP_DISTANCE, clamp, mmToPx, pxToMm } from "./editor-utils";
+
+function getImageBrightness(img: HTMLImageElement) {
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+
+  if (!ctx) return 255;
+
+  const size = 40; // 🔥 downscale (performance)
+
+  canvas.width = size;
+  canvas.height = size;
+
+  ctx.drawImage(img, 0, 0, size, size);
+
+  const data = ctx.getImageData(0, 0, size, size).data;
+
+  let r = 0,
+    g = 0,
+    b = 0;
+  const count = size * size;
+
+  for (let i = 0; i < data.length; i += 4) {
+    r += data[i];
+    g += data[i + 1];
+    b += data[i + 2];
+  }
+
+  r /= count;
+  g /= count;
+  b /= count;
+
+  return (r * 299 + g * 587 + b * 114) / 1000;
+}
 
 function MiniActionBar({
   type,
@@ -98,7 +131,8 @@ function CanvasItem({
 }) {
   const textRef = useRef<HTMLTextAreaElement | null>(null);
   const measureRef = useRef<HTMLDivElement | null>(null);
-
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const latestDragPatchRef = useRef<Partial<EditorElement> | null>(null);
   const dragRef = useRef<{
     startX: number;
     startY: number;
@@ -106,6 +140,7 @@ function CanvasItem({
     baseY: number;
     changed: boolean;
   } | null>(null);
+  const lastGuideUpdateRef = useRef(0);
 
   const resizeRef = useRef<{
     startX: number;
@@ -115,6 +150,7 @@ function CanvasItem({
     changed: boolean;
   } | null>(null);
 
+  const bgImageRef = useRef<HTMLImageElement | null>(null);
   const textSnapshotRef = useRef<string | null>(null);
 
   const getLogicalX = () =>
@@ -132,6 +168,7 @@ function CanvasItem({
   const startDrag = (clientX: number, clientY: number) => {
     onSelect();
     onDragStart();
+    latestDragPatchRef.current = null;
     dragRef.current = {
       startX: clientX,
       startY: clientY,
@@ -287,24 +324,38 @@ function CanvasItem({
 
     dragRef.current.changed = true;
 
-    onPatch({
+    latestDragPatchRef.current = {
       x: snappedX,
       y: snappedY,
       xMm: pxToMm(snappedX),
       yMm: pxToMm(snappedY),
-    });
+    };
 
-    onGuidesChange({
-      vertical: verticalGuide,
-      horizontal: horizontalGuide,
-    });
+    if (boxRef.current) {
+      boxRef.current.style.left = `${(snappedX + previewBleed) * scale}px`;
+      boxRef.current.style.top = `${(snappedY + previewBleed) * scale}px`;
+    }
+    const now = performance.now();
+
+    if (now - lastGuideUpdateRef.current > 50) {
+      lastGuideUpdateRef.current = now;
+
+      onGuidesChange({
+        vertical: verticalGuide,
+        horizontal: horizontalGuide,
+      });
+    }
   };
 
   const handlePointerUp = () => {
-    if (dragRef.current?.changed) {
+    if (dragRef.current?.changed && latestDragPatchRef.current) {
+      onPatch(latestDragPatchRef.current);
       onCommit();
     }
+
+    latestDragPatchRef.current = null;
     dragRef.current = null;
+
     onGuidesChange({ vertical: null, horizontal: null });
     onDragEnd();
   };
@@ -343,6 +394,9 @@ function CanvasItem({
         docWidth - logicalX,
       );
       const nextHeight = measureTextHeight(nextWidth);
+      if (textRef.current) {
+        textRef.current.style.height = `${nextHeight * scale}px`;
+      }
 
       resizeRef.current.changed = true;
 
@@ -352,6 +406,7 @@ function CanvasItem({
         widthMm: pxToMm(nextWidth),
         heightMm: pxToMm(nextHeight),
       });
+
       return;
     }
 
@@ -404,55 +459,70 @@ function CanvasItem({
     onDragEnd();
   };
 
-  const lastAutoHeightRef = useRef<number | null>(null);
-
-  useLayoutEffect(() => {
-    if (element.type !== "text") return;
-    if (!textRef.current) return;
-
-    const el = textRef.current;
-    el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
-
-    const logicalHeight = Math.max(el.scrollHeight / scale, 60);
-    const currentHeight = getLogicalH();
-
-    const roundedNext = Math.round(logicalHeight);
-    const roundedCurrent = Math.round(currentHeight);
-    const roundedLast = lastAutoHeightRef.current ?? null;
-
-    // зөвхөн бодит өөрчлөлт байвал patch хийнэ
-    if (
-      Math.abs(roundedNext - roundedCurrent) > 2 &&
-      roundedLast !== roundedNext
-    ) {
-      lastAutoHeightRef.current = roundedNext;
-
-      onPatch({
-        height: roundedNext,
-        heightMm: pxToMm(roundedNext),
-      });
-    }
-  }, [
-    element.type,
-    element.text,
-    element.fontSize,
-    element.fontScale,
-    element.fontWeight,
-    element.fontFamily,
-    element.lineHeight,
-    element.width,
-    element.widthMm,
-    scale,
-  ]);
+  const lastAutoSizeRef = useRef<{ width: number; height: number } | null>(
+    null,
+  );
 
   const logicalX = getLogicalX();
   const logicalY = getLogicalY();
   const logicalW = getLogicalW();
   const logicalH = getLogicalH();
 
+  // 🔥 SHADOW + AUTO CONTRAST ENGINE
+
+  const fontSize = (element.fontSize ?? 40) * (element.fontScale ?? 1);
+
+  // AI shadow strength
+  let shadowStrength = (element as any).shadowStrength ?? 0.7;
+
+  // role tweak
+  if (element.role === "primary") shadowStrength = 0.85;
+  if (element.role === "contact") shadowStrength = 0.5;
+  let bgBrightness = 255;
+  if (bgImageRef.current) {
+    try {
+      bgBrightness = getImageBrightness(bgImageRef.current);
+    } catch {
+      bgBrightness = 255;
+    }
+  }
+
+  // 🧠 AUTO CONTRAST
+
+  function getBrightness(hex: string) {
+    if (!hex || hex[0] !== "#") return 255;
+
+    const r = parseInt(hex.substr(1, 2), 16);
+    const g = parseInt(hex.substr(3, 2), 16);
+    const b = parseInt(hex.substr(5, 2), 16);
+
+    return (r * 299 + g * 587 + b * 114) / 1000;
+  }
+
+  let finalColor = element.color ?? "#ffffff";
+  const textBrightness = getBrightness(finalColor);
+  const diff = Math.abs(bgBrightness - textBrightness);
+
+  // box-г автоматаар битгий асаа
+  let needsBox = false;
+
+  // shadow бол зөвхөн уншигдах байдалд туслах жижиг effect
+  if (diff < 90) {
+    shadowStrength = 0.45;
+  } else {
+    shadowStrength = 0.25;
+  }
+  const shadowY = Math.min(fontSize * 0.05, 10);
+  const blur = Math.min(fontSize * 0.12, 22);
+
+  const dynamicShadow =
+    shadowStrength > 0
+      ? `0px ${shadowY}px ${blur}px rgba(0,0,0,${shadowStrength})`
+      : "none";
+
   return (
     <div
+      ref={boxRef}
       data-element-id={element.id}
       onPointerDown={handleBoxPointerDown}
       onPointerMove={handlePointerMove}
@@ -464,9 +534,18 @@ function CanvasItem({
         left: (logicalX + previewBleed) * scale,
         top: (logicalY + previewBleed) * scale,
         width: logicalW * scale,
-        height: element.type === "text" ? "auto" : logicalH * scale,
+        height: logicalH * scale,
         opacity: element.opacity,
         transform: `rotate(${element.rotation}deg)`,
+        zIndex: selected
+          ? 50
+          : element.name === "AI BG"
+            ? 0
+            : element.type === "logo"
+              ? 30
+              : element.type === "text"
+                ? 20
+                : 10,
       }}
     >
       {selected && (
@@ -491,7 +570,7 @@ function CanvasItem({
               onDragStart();
             }}
             onChange={(e) => {
-              lastAutoHeightRef.current = null;
+              lastAutoSizeRef.current = null;
               onPatch({ text: e.target.value });
             }}
             onBlur={() => {
@@ -511,24 +590,27 @@ function CanvasItem({
             }}
             className="w-full resize-none border-none bg-transparent outline-none"
             style={{
-              color: element.color,
+              color: finalColor,
               fontSize: `${(element.fontSize ?? 40) * (element.fontScale ?? 1) * scale}px`,
               fontWeight: element.fontWeight ?? 400,
               fontFamily:
                 element.fontFamily ?? "var(--font-inter), Inter, sans-serif",
               textAlign: element.textAlign ?? "left",
               lineHeight: element.lineHeight ?? 1.2,
-              textShadow: element.textShadow,
+              textShadow: dynamicShadow,
+
+              background: "transparent",
               padding: 0,
+              borderRadius: 0,
+
               whiteSpace: "pre-wrap",
               wordBreak: "break-word",
               overflowWrap: "anywhere",
               overflow: "hidden",
               width: "100%",
-              minWidth: "100%",
-              maxWidth: "100%",
               display: "block",
               boxSizing: "border-box",
+              pointerEvents: selected ? "auto" : "none",
             }}
             spellCheck={false}
             autoCorrect="off"
@@ -555,12 +637,13 @@ function CanvasItem({
           />
         </>
       )}
-
       {element.type === "logo" && (
         // eslint-disable-next-line @next/next/no-img-element
         <img
+          ref={element.name === "AI BG" ? bgImageRef : null}
           src={element.src}
           alt={element.name}
+          crossOrigin="anonymous"
           className={`h-full w-full ${
             element.name === "AI BG"
               ? "object-cover scale-[1.03]"
@@ -601,4 +684,4 @@ function CanvasItem({
   );
 }
 
-export default CanvasItem;
+export default memo(CanvasItem);

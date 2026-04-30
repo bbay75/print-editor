@@ -80,6 +80,12 @@ headline = main title
 line = supporting text
 cta = action text
 
+LAYOUT TYPES:
+- hero: big headline, premium poster style, strong center composition
+- center: simple balanced layout, all text centered
+- top-heavy: text mostly on top, useful when bottom image/background is important
+- split: text on left side, visual/empty space on right side
+
 POSITIONS (must use only these):
 top-left, top-center, top-right,
 center-left, center, center-right,
@@ -100,7 +106,7 @@ Position rule:
 - If user did not mention a location, omit position.
 Schema:
 {
-  "layoutType": "hero | center | top-heavy",
+"layoutType": "hero | center | top-heavy | split",
   "texts": [
     {
       "role": "headline | line | cta",
@@ -226,7 +232,8 @@ realistic
       layoutType:
         parsed.layoutType === "center" ||
         parsed.layoutType === "top-heavy" ||
-        parsed.layoutType === "hero"
+        parsed.layoutType === "hero" ||
+        parsed.layoutType === "split"
           ? parsed.layoutType
           : "hero",
       texts,
