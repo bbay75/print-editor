@@ -1,4 +1,4 @@
-import type { EditorElement } from "./editor-types";
+import type { EditorElement } from "../core/editor-types";
 import type { LayoutType } from "./layout-engine";
 import { buildAiElements } from "./build-ai-elements";
 import { buildDesignerLayout } from "./designer-layout"; // 🔥 ЭНЭ НЭМ

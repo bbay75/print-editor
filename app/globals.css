@@ -64,3 +64,24 @@ select {
     margin: auto;
   }
 }
+[data-editor-textarea="true"]::-webkit-scrollbar {
+  display: none;
+}
+
+[data-editor-textarea="true"] {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  resize: none;
+  overflow: hidden;
+}
+textarea {
+  resize: none !important;
+}
+
+textarea::-webkit-resizer {
+  display: none;
+}
+
+textarea::-webkit-scrollbar {
+  display: none;
+}

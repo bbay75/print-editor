@@ -1,11 +1,11 @@
-import type { EditorElement, TextRole } from "./editor-types";
-import { cloneElements } from "./editor-history";
-import { pxToMm } from "./editor-utils";
+import type { EditorElement, TextRole } from "../core/editor-types";
+import { cloneElements } from "../core/editor-history";
+import { pxToMm } from "../core/editor-utils";
 import {
   getRoleLayoutConfig,
   fitFontSizeSmart,
   measureTextHeightForFont,
-} from "./editor-typography";
+} from "../core/editor-typography";
 
 function area(el: any) {
   return el.width * el.height;

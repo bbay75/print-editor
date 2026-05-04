@@ -1,51 +1,32 @@
 "use client";
-import React, {
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { toPng } from "html-to-image";
 import toast from "react-hot-toast";
-import type { EditorElement, ElementType, TextRole } from "./editor-types";
-import { supabase } from "@/lib/supabase";
-import { buildAiElements } from "./build-ai-elements";
-import { cloneElements, sameElements } from "./editor-history";
+import type { EditorElement, TextRole } from "./core/editor-types";
 import { checkAccess, registerUser } from "@/lib/api-client";
-import FontPreviewDropdown from "./FontPreviewDropdown";
-import CanvasItem from "./CanvasItem";
-import ToolbarButton from "./ToolbarButton";
-import RegisterModal from "./RegisterModal";
-import { createTextElement, createLineElement } from "./editor-elements";
-import { validateDocSize } from "./validate-doc-size";
-import { checkFreeUsage } from "./check-free-usage";
-import { validateBeforeAI } from "./validate-before-ai";
-import { buildLayoutElements } from "./apply-layout";
-import { buildDesignerLayout } from "./designer-layout";
+import CanvasStage from "./canvas/CanvasStage";
+import ToolbarButton from "./controls/ToolbarButton";
+import RegisterModal from "./modals/RegisterModal";
+import SettingsPanel from "./panels/SettingsPanel";
+import OrderModal from "./order/OrderModal";
+import { createTextElement, createLineElement } from "./core/editor-elements";
+import { checkFreeUsage } from "./validation/check-free-usage";
+import { validateBeforeAI } from "./validation/validate-before-ai";
+import { buildLayoutElements } from "./ai/apply-layout";
+import { buildDesignerLayout } from "./ai/designer-layout";
+import { measureTextHeightForFont } from "./core/editor-typography";
 import {
-  getRoleLayoutConfig,
-  fitFontSizeSmart,
-  measureTextHeightForFont,
-} from "./editor-typography";
-import {
-  SNAP_DISTANCE,
   GUIDE_COLOR,
   EXPORT_DPI,
-  clamp,
   makeId,
-  fitFontSize,
   mmToPx,
   pxToMm,
   getPreviewScale,
   parseMm,
-} from "./editor-utils";
-import {
-  getLayoutPosition,
-  getPositionXY,
-  type LayoutPosition,
-  type LayoutType,
-} from "./layout-engine";
+} from "./core/editor-utils";
+import { type LayoutType } from "./ai/layout-engine";
+import { useEditorHistory } from "./hooks/useEditorHistory";
+import { patchEditorElement } from "./utils/patchElement";
 import {
   Undo2,
   Redo2,
@@ -54,14 +35,7 @@ import {
   Plus,
   Printer,
   ImagePlus,
-  Wand2,
   PanelTopClose,
-  X,
-  Move,
-  AlignLeft,
-  AlignCenter,
-  AlignRight,
-  Bold,
 } from "lucide-react";
 function getSafeAreaFitMaxFontSize({
   text,
@@ -75,6 +49,7 @@ function getSafeAreaFitMaxFontSize({
   lineHeight,
   fontFamily,
   role,
+  maxBottomY,
 }: {
   text: string;
   widthPx: number;
@@ -87,6 +62,7 @@ function getSafeAreaFitMaxFontSize({
   lineHeight: number;
   fontFamily?: string;
   role?: TextRole;
+  maxBottomY?: number;
 }) {
   const safeLeft = previewSafe;
   const safeRight = docWidth - previewSafe;
@@ -94,8 +70,14 @@ function getSafeAreaFitMaxFontSize({
   const safeBottom = docHeight - previewSafe;
   const clampedX = Math.max(currentX, safeLeft);
   const clampedY = Math.max(currentY, safeTop);
+  const bottomLimit = Math.min(
+    safeBottom,
+    typeof maxBottomY === "number" && Number.isFinite(maxBottomY)
+      ? maxBottomY
+      : safeBottom,
+  );
   const allowedWidth = Math.min(widthPx, safeRight - clampedX);
-  const allowedHeight = safeBottom - clampedY;
+  const allowedHeight = bottomLimit - clampedY;
   if (allowedWidth <= 40 || allowedHeight <= 40) {
     return role === "contact" ? 24 : 40;
   }
@@ -121,84 +103,54 @@ function getSafeAreaFitMaxFontSize({
   }
   return best;
 }
-function Range({
-  label,
-  value,
-  min,
-  max,
-  step = 1,
-  onChange,
-  onCommit,
-  onStart,
-}: {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  step?: number;
-  onChange: (value: number) => void;
-  onCommit?: () => void;
-  onStart?: () => void;
-}) {
-  return (
-    <label className="grid gap-1 text-sm">
-      <span>
-        {label}: {step < 1 ? value.toFixed(2) : Math.round(value)}
-      </span>
-      <input
-        type="range"
-        value={value}
-        min={min}
-        max={max}
-        step={step}
-        onPointerDown={onStart}
-        onMouseDown={onStart}
-        onTouchStart={onStart}
-        onChange={(e) => onChange(Number(e.target.value))}
-        onMouseUp={onCommit}
-        onTouchEnd={onCommit}
-        onPointerUp={onCommit}
-      />
-    </label>
+function clampTextElementIntoCanvas(
+  element: EditorElement,
+  docWidth: number,
+  docHeight: number,
+  previewSafe: number,
+) {
+  if (element.type !== "text") return element;
+
+  const x = typeof element.xMm === "number" ? mmToPx(element.xMm) : element.x;
+  const y = typeof element.yMm === "number" ? mmToPx(element.yMm) : element.y;
+  const width = Math.max(
+    20,
+    typeof element.widthMm === "number"
+      ? mmToPx(element.widthMm)
+      : element.width,
   );
-}
-function SafeColorInput({
-  value,
-  onChange,
-  onCommit,
-  onStart,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  onCommit?: () => void;
-  onStart?: () => void;
-}) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-  if (!mounted) {
-    return (
-      <div className="h-11 w-full rounded-xl border border-slate-200 bg-white" />
-    );
-  }
-  return (
-    <input
-      type="color"
-      value={value}
-      onPointerDown={onStart}
-      onMouseDown={onStart}
-      onFocus={onStart}
-      onChange={(e) => {
-        onChange(e.target.value);
-        onCommit?.();
-      }}
-      onBlur={onCommit}
-      className="h-11 w-full rounded-xl border border-slate-200 p-1"
-      suppressHydrationWarning
-    />
+  const fontSize = Math.max(1, element.fontSize ?? 40);
+  const lineHeight = Math.max(element.lineHeight ?? 1.2, 1);
+  const textHeight = Math.ceil(
+    measureTextHeightForFont(
+      element.text ?? "",
+      width,
+      fontSize,
+      element.fontWeight ?? 700,
+      lineHeight,
+      element.fontFamily,
+    ),
   );
+
+  const minX = previewSafe;
+  const minY = previewSafe;
+  const maxX = Math.max(minX, docWidth - previewSafe - width);
+  const maxY = Math.max(minY, docHeight - previewSafe - textHeight);
+
+  const nextX = Math.min(Math.max(x, minX), maxX);
+  const nextY = Math.min(Math.max(y, minY), maxY);
+
+  return {
+    ...element,
+    x: nextX,
+    y: nextY,
+    xMm: pxToMm(nextX),
+    yMm: pxToMm(nextY),
+    height: 0,
+    heightMm: undefined,
+  };
 }
+
 export default function EditorShell() {
   const [doc, setDoc] = useState<{
     widthMm: string | number;
@@ -217,13 +169,16 @@ export default function EditorShell() {
     width?: string;
     height?: string;
   }>({});
-  const [elements, setElements] = useState<EditorElement[]>([]);
-  const elementsRef = useRef<EditorElement[]>([]);
-  const [history, setHistory] = useState<EditorElement[][]>([]);
-  const historyRef = useRef<EditorElement[][]>([]);
-  const [future, setFuture] = useState<EditorElement[][]>([]);
-  const futureRef = useRef<EditorElement[][]>([]);
-  const pendingHistoryRef = useRef<EditorElement[] | null>(null);
+  const {
+    elements,
+    elementsRef,
+    applyElements,
+    pushHistory,
+    captureHistoryStart,
+    commitHistory,
+    undo,
+    redo,
+  } = useEditorHistory([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [aiPrompt, setAiPrompt] = useState("");
   const [generateCount, setGenerateCount] = useState(0);
@@ -277,13 +232,6 @@ export default function EditorShell() {
   const [isDraggingElement, setIsDraggingElement] = useState(false);
   const [showGuides, setShowGuides] = useState(true);
   const [includeCropMarks, setIncludeCropMarks] = useState(false);
-  const [settingsPos, setSettingsPos] = useState({ x: 980, y: 220 });
-  const settingsDragRef = useRef<{
-    startX: number;
-    startY: number;
-    baseX: number;
-    baseY: number;
-  } | null>(null);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const logoInputRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => {
@@ -322,110 +270,49 @@ export default function EditorShell() {
     };
   }, []);
   useEffect(() => {
-    elementsRef.current = JSON.parse(JSON.stringify(elements));
+    if (elements.length === 0) return;
 
-    if (elements.length > 0) {
-      const lightElements = elements.map((el) => {
-        if (el.type === "logo") {
-          return {
-            ...el,
-            src: el.name === "AI BG" ? "" : "",
-          };
-        }
-
-        return el;
-      });
-
-      try {
-        localStorage.setItem(
-          "print_editor_elements",
-          JSON.stringify(lightElements),
-        );
-      } catch (err) {
-        console.warn("localStorage save skipped:", err);
+    const lightElements = elements.map((el) => {
+      if (el.type === "text") {
+        return { ...el, height: 0, heightMm: undefined };
       }
+
+      if (el.type === "logo") return { ...el, src: "" };
+
+      return el;
+    });
+
+    try {
+      localStorage.setItem(
+        "print_editor_elements",
+        JSON.stringify(lightElements),
+      );
+    } catch (err) {
+      console.warn("localStorage save skipped:", err);
     }
   }, [elements]);
-  useEffect(() => {
-    historyRef.current = history;
-  }, [history]);
-  useEffect(() => {
-    futureRef.current = future;
-  }, [future]);
-  const applyElements = (next: EditorElement[]) => {
-    const safeNext = cloneElements(Array.isArray(next) ? next : []);
-    elementsRef.current = safeNext;
-    setElements(safeNext);
-  };
-  const pushUniqueHistory = (snapshot: EditorElement[]) => {
-    const safeSnapshot = cloneElements(snapshot);
-    const prev = historyRef.current;
-    const last = prev[prev.length - 1];
-    if (last && sameElements(last, safeSnapshot)) return;
-    const nextHistory = [...prev.slice(-29), safeSnapshot];
-    historyRef.current = nextHistory;
-    setHistory(nextHistory);
-  };
-  const captureHistoryStart = () => {
-    if (!pendingHistoryRef.current) {
-      pendingHistoryRef.current = cloneElements(elementsRef.current);
-    }
-  };
-  const commitHistory = () => {
-    if (!pendingHistoryRef.current) return;
-    if (!sameElements(pendingHistoryRef.current, elementsRef.current)) {
-      pushUniqueHistory(pendingHistoryRef.current);
-      futureRef.current = [];
-      setFuture([]);
-    }
-    pendingHistoryRef.current = null;
-  };
-  const pushHistory = (next: EditorElement[]) => {
-    pushUniqueHistory(elementsRef.current);
-    futureRef.current = [];
-    setFuture([]);
-    pendingHistoryRef.current = null;
-    applyElements(next);
-  };
   const patchElement = (id: string, patch: Partial<EditorElement>) => {
     const base = Array.isArray(elementsRef.current) ? elementsRef.current : [];
+
     const nextList = base.map((item) => {
       if (item.id !== id) return item;
-      const next: EditorElement = { ...item, ...patch };
-      if (patch.x !== undefined) next.xMm = pxToMm(patch.x);
-      if (patch.y !== undefined) next.yMm = pxToMm(patch.y);
-      if (patch.xMm !== undefined) next.x = mmToPx(patch.xMm);
-      if (patch.yMm !== undefined) next.y = mmToPx(patch.yMm);
-      if (patch.width !== undefined) next.widthMm = pxToMm(patch.width);
-      if (patch.height !== undefined) next.heightMm = pxToMm(patch.height);
-      if (patch.widthMm !== undefined) next.width = mmToPx(patch.widthMm);
-      if (patch.heightMm !== undefined) next.height = mmToPx(patch.heightMm);
-      if (next.type === "logo") {
-        const aspectRatio = next.aspectRatio ?? 1;
-        if (patch.width !== undefined && patch.height === undefined) {
-          next.height = Math.round(next.width / aspectRatio);
-          next.heightMm = pxToMm(next.height);
-        }
-        if (patch.height !== undefined && patch.width === undefined) {
-          next.width = Math.round(next.height * aspectRatio);
-          next.widthMm = pxToMm(next.width);
-        }
+
+      const next = patchEditorElement(item, patch);
+
+      if (next.type === "text") {
+        return {
+          ...next,
+          height: 0,
+          heightMm: undefined,
+        };
       }
-      if (next.type === "line") {
-        const thickness =
-          patch.lineThickness ??
-          patch.height ??
-          next.lineThickness ??
-          next.height ??
-          6;
-        next.lineThickness = thickness;
-        next.height = thickness;
-        next.heightMm = pxToMm(thickness);
-      }
+
       return next;
     });
+
     applyElements(nextList);
   };
+
   const selected = useMemo(
     () =>
       (Array.isArray(elements) ? elements : []).find(
@@ -453,6 +340,15 @@ export default function EditorShell() {
     selected?.widthMm !== undefined
       ? mmToPx(selected.widthMm)
       : (selected?.width ?? 300);
+  const nextTextTop =
+    selected?.type === "text"
+      ? (Array.isArray(elements) ? elements : [])
+          .filter((el) => el.type === "text" && el.id !== selected.id)
+          .map((el) => (el.yMm !== undefined ? mmToPx(el.yMm) : (el.y ?? 0)))
+          .filter((y) => y > selectedLogicalY + 4)
+          .sort((a, b) => a - b)[0]
+      : undefined;
+
   const safeAreaFitMaxFontSize =
     selected?.type === "text"
       ? getSafeAreaFitMaxFontSize({
@@ -464,16 +360,16 @@ export default function EditorShell() {
           docHeight: previewCanvasHeight,
           previewSafe,
           fontWeight: selected.fontWeight ?? 700,
-          // ❗ ЭНЭ ХОЁР ЧУХАЛ
           lineHeight: selected.lineHeight ?? 1.2,
           fontFamily: selected.fontFamily,
           role: selected.role,
+          maxBottomY:
+            typeof nextTextTop === "number" ? nextTextTop - 22 : undefined,
         })
       : 220;
   const fontSizeControlMax = Math.max(
     fontSizeControlMin,
     safeAreaFitMaxFontSize,
-    Math.ceil(currentFontSize),
   );
   const fontSizeControlStep = 1;
   const addText = (role: TextRole = "support") => {
@@ -511,8 +407,25 @@ export default function EditorShell() {
   };
   const updateSelected = (patch: Partial<EditorElement>) => {
     if (!selectedId) return;
-    captureHistoryStart();
-    patchElement(selectedId, patch);
+
+    const base = Array.isArray(elementsRef.current) ? elementsRef.current : [];
+
+    const nextList = base.map((item) => {
+      if (item.id !== selectedId) return item;
+
+      const next = patchEditorElement(item, patch);
+
+      if (next.type !== "text") return next;
+
+      return clampTextElementIntoCanvas(
+        next,
+        previewCanvasWidth,
+        previewCanvasHeight,
+        previewSafe,
+      );
+    });
+
+    applyElements(nextList);
   };
   const beginSelectedEdit = () => {
     if (!selectedId) return;
@@ -520,35 +433,6 @@ export default function EditorShell() {
   };
   const finishSelectedEdit = () => {
     commitHistory();
-  };
-  const undo = () => {
-    const prevHistory = historyRef.current;
-    const last = prevHistory[prevHistory.length - 1];
-    if (!last) return;
-    const current = cloneElements(elementsRef.current);
-    const nextFuture = [current, ...futureRef.current];
-    futureRef.current = nextFuture;
-    setFuture(nextFuture);
-    const nextHistory = prevHistory.slice(0, -1);
-    historyRef.current = nextHistory;
-    setHistory(nextHistory);
-    pendingHistoryRef.current = null;
-    setSelectedId(null);
-    applyElements(last);
-  };
-  const redo = () => {
-    const next = futureRef.current[0];
-    if (!next) return;
-    const current = cloneElements(elementsRef.current);
-    const nextHistory = [...historyRef.current, current];
-    const nextFuture = futureRef.current.slice(1);
-    historyRef.current = nextHistory;
-    futureRef.current = nextFuture;
-    setHistory(nextHistory);
-    setFuture(nextFuture);
-    pendingHistoryRef.current = null;
-    setSelectedId(null);
-    applyElements(next);
   };
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -584,57 +468,6 @@ export default function EditorShell() {
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
   }, [selectedId]);
-  function looksLikeContact(text: string) {
-    return /(\+?\d[\d\s-]{5,})/.test(text);
-  }
-  const extractClientFallback = (prompt: string) => {
-    const lines = prompt
-      .split("\n")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    let headline = "";
-    let subtitle = "";
-    let cta = "";
-    for (const line of lines) {
-      if (!headline && /гарчиг|headline|голд нь/i.test(line)) {
-        const cleaned = line
-          .replace(/.*?(гарчигтай|гарчиг|headline|голд нь)\s*/i, "")
-          .replace(/^[:\-–—]\s*/, "")
-          .replace(/гэж\s+бич\.?$/i, "")
-          .trim();
-        if (cleaned) headline = cleaned;
-      }
-      if (!subtitle && /доор нь|subtitle|coffee|dessert|brunch/i.test(line)) {
-        const cleaned = line
-          .replace(/.*?(доор нь|subtitle)\s*/i, "")
-          .replace(/^[:\-–—]\s*/, "")
-          .replace(/гэж\s+бич\.?$/i, "")
-          .trim();
-        if (cleaned) subtitle = cleaned;
-      }
-      if (!cta && /утас|phone|call/i.test(line)) {
-        const cleaned = line
-          .replace(/.*?(утас|phone|call)\s*[:：]?\s*/i, "")
-          .trim();
-        if (cleaned) cta = /^утас/i.test(line) ? `Утас: ${cleaned}` : cleaned;
-      }
-    }
-    if (!headline) {
-      const m = prompt.match(/([A-ZА-ЯӨҮЁ][A-ZА-ЯӨҮЁa-zа-яөүё\s]{3,40})/);
-      if (m) headline = m[1].trim();
-    }
-    if (!subtitle) {
-      const m = prompt.match(
-        /(Coffee.*|Dessert.*|Brunch.*|Coffee\s*[•*·-]\s*Dessert.*)/i,
-      );
-      if (m) subtitle = m[1].replace(/\s+/g, " ").trim();
-    }
-    if (!cta) {
-      const m = prompt.match(/(\d{6,12})/);
-      if (m) cta = `Утас: ${m[1]}`;
-    }
-    return { headline, subtitle, cta };
-  };
   const getDeviceId = () => {
     let id = localStorage.getItem("print_editor_device_id");
     if (!id) {
@@ -955,14 +788,6 @@ export default function EditorShell() {
     includeCropMarks,
     preferCmyk,
   });
-  const buildPreviewImage = async () => {
-    if (!surfaceRef.current) return null;
-    const dataUrl = await toPng(surfaceRef.current, {
-      cacheBust: true,
-      pixelRatio: 3, // 🔥 өмнө 2 байсан → 3 болго
-    });
-    return dataUrl;
-  };
   const handleOrder = async () => {
     if (isSendingOrder) return;
     if (!surfaceRef.current) {
@@ -1082,29 +907,6 @@ export default function EditorShell() {
       console.error(err);
       setStatus("PDF алдаа ❌");
     }
-  };
-  const handleSettingsPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    settingsDragRef.current = {
-      startX: e.clientX,
-      startY: e.clientY,
-      baseX: settingsPos.x,
-      baseY: settingsPos.y,
-    };
-    (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
-  };
-  const handleSettingsPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!settingsDragRef.current) return;
-    const dx = e.clientX - settingsDragRef.current.startX;
-    const dy = e.clientY - settingsDragRef.current.startY;
-    setSettingsPos({
-      x: settingsDragRef.current.baseX + dx,
-      y: settingsDragRef.current.baseY + dy,
-    });
-  };
-  const handleSettingsPointerUp = () => {
-    settingsDragRef.current = null;
   };
   return (
     <main
@@ -1415,6 +1217,48 @@ Coffee * Dessert * Brunch.
               </div>
             </div>
           </div>
+
+          {selected && !isDraggingElement && (
+            <SettingsPanel
+              selected={selected}
+              fontSizeControlMin={fontSizeControlMin}
+              fontSizeControlMax={fontSizeControlMax}
+              fontSizeControlStep={fontSizeControlStep}
+              onStartEdit={beginSelectedEdit}
+              onCommitEdit={finishSelectedEdit}
+              onPatch={updateSelected}
+              onClose={() => setSelectedId(null)}
+              onFontChange={(nextFont) => {
+                updateSelected({ fontFamily: nextFont });
+                finishSelectedEdit();
+              }}
+              onTextAlignChange={(value) => {
+                const base = Array.isArray(elementsRef.current)
+                  ? elementsRef.current
+                  : [];
+                const next = base.map((item) =>
+                  item.id === selected.id
+                    ? { ...item, textAlign: value }
+                    : item,
+                );
+                pushHistory(next);
+              }}
+              onToggleBold={() => {
+                updateSelected({
+                  fontWeight: (selected.fontWeight ?? 700) >= 700 ? 400 : 800,
+                });
+                finishSelectedEdit();
+              }}
+              onFontSizeChange={(value) => {
+                const nextFontSize = Math.min(value, fontSizeControlMax);
+
+                updateSelected({
+                  fontSize: nextFontSize,
+                  fontScale: 1,
+                });
+              }}
+            />
+          )}
         </aside>
         <section
           className="min-w-0 rounded-3xl bg-white p-3 shadow-sm md:p-4"
@@ -1441,11 +1285,11 @@ Coffee * Dessert * Brunch.
                   label="Текст"
                   onClick={() => changeRole("support")}
                 />
-                {/* <ToolbarButton
+                <ToolbarButton
                   icon={PanelTopClose}
                   label="Шугам"
                   onClick={addLine}
-                /> */}
+                />
                 <div className="mx-1 hidden h-8 w-px bg-slate-200 md:block" />
                 <div className="flex items-center gap-2">
                   <button
@@ -1574,50 +1418,48 @@ Coffee * Dessert * Brunch.
                         </div>
                       </div>
                     )}
-                    {(Array.isArray(elements) ? elements : []).map((item) => (
-                      <CanvasItem
-                        key={item.id}
-                        element={item}
-                        scale={scale}
-                        selected={item.id === selectedId}
-                        docWidth={previewCanvasWidth}
-                        docHeight={previewCanvasHeight}
-                        previewBleed={previewBleed}
-                        previewSafe={previewSafe}
-                        onSelect={() => setSelectedId(item.id)}
-                        onDelete={() => {
-                          const base = Array.isArray(elementsRef.current)
-                            ? elementsRef.current
-                            : [];
-                          const next = base.filter((el) => el.id !== item.id);
-                          setSelectedId(null);
-                          pushHistory(next);
-                        }}
-                        onPatch={(patch) => {
-                          patchElement(item.id, patch);
-                        }}
-                        onCommit={commitHistory}
-                        onDragStart={() => {
-                          captureHistoryStart();
-                          setIsDraggingElement(true);
-                        }}
-                        onDragEnd={() => {
-                          setIsDraggingElement(false);
-                        }}
-                        onGuidesChange={(nextGuides) => {
-                          setGuides({
-                            vertical:
-                              nextGuides.vertical !== null
-                                ? nextGuides.vertical + previewBleed
-                                : null,
-                            horizontal:
-                              nextGuides.horizontal !== null
-                                ? nextGuides.horizontal + previewBleed
-                                : null,
-                          });
-                        }}
-                      />
-                    ))}
+
+                    <CanvasStage
+                      elements={elements}
+                      selectedId={selectedId}
+                      scale={scale}
+                      docWidth={previewCanvasWidth}
+                      docHeight={previewCanvasHeight}
+                      previewBleed={previewBleed}
+                      previewSafe={previewSafe}
+                      onSelect={setSelectedId}
+                      onDelete={(id) => {
+                        const base = Array.isArray(elementsRef.current)
+                          ? elementsRef.current
+                          : [];
+                        const next = base.filter((el) => el.id !== id);
+                        setSelectedId(null);
+                        pushHistory(next);
+                      }}
+                      onPatch={(id, patch) => {
+                        patchElement(id, patch);
+                      }}
+                      onCommit={commitHistory}
+                      onDragStart={() => {
+                        captureHistoryStart();
+                        setIsDraggingElement(true);
+                      }}
+                      onDragEnd={() => {
+                        setIsDraggingElement(false);
+                      }}
+                      onGuidesChange={(nextGuides) => {
+                        setGuides({
+                          vertical:
+                            nextGuides.vertical !== null
+                              ? nextGuides.vertical + previewBleed
+                              : null,
+                          horizontal:
+                            nextGuides.horizontal !== null
+                              ? nextGuides.horizontal + previewBleed
+                              : null,
+                        });
+                      }}
+                    />
                     {guides.vertical !== null && (
                       <div
                         className="pointer-events-none absolute top-0 z-30"
@@ -1655,260 +1497,16 @@ Coffee * Dessert * Brunch.
           </div>
         </section>
       </div>
-      {selected && !isDraggingElement && (
-        <div
-          className="fixed z-[200] w-[300px] rounded-3xl border border-slate-200 bg-white/95 shadow-2xl backdrop-blur"
-          style={{
-            left: settingsPos.x,
-            top: settingsPos.y,
-          }}
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div
-            onPointerDown={handleSettingsPointerDown}
-            onPointerMove={handleSettingsPointerMove}
-            onPointerUp={handleSettingsPointerUp}
-            className="flex cursor-move items-center justify-between rounded-t-3xl border-b border-slate-200 px-4 py-3 text-sm font-bold text-slate-900"
-          >
-            <div className="inline-flex items-center gap-2">
-              <Move className="h-4 w-4" />
-              Тохиргоо
-            </div>
-            <button
-              onPointerDown={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-              }}
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setSelectedId(null);
-              }}
-              type="button"
-              className="rounded-lg p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
-              aria-label="Хаах"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-          <div className="p-4">
-            <div className="grid gap-3">
-              {(selected.type === "text" || selected.type === "line") && (
-                <label className="grid gap-1 text-sm">
-                  <span>Өнгө</span>
-                  <SafeColorInput
-                    value={selected.color ?? "#0f172a"}
-                    onStart={beginSelectedEdit}
-                    onChange={(value) => updateSelected({ color: value })}
-                    onCommit={finishSelectedEdit}
-                  />
-                </label>
-              )}
-              {selected.type === "text" && (
-                <>
-                  <label className="grid gap-1 text-sm">
-                    <span>Фонт</span>
-                    <FontPreviewDropdown
-                      value={
-                        selected.fontFamily ??
-                        "var(--font-inter), Inter, sans-serif"
-                      }
-                      onChange={(nextFont) => {
-                        const base = Array.isArray(elementsRef.current)
-                          ? elementsRef.current
-                          : [];
-                        const next = base.map((item) =>
-                          item.id === selected.id
-                            ? { ...item, fontFamily: nextFont }
-                            : item,
-                        );
-                        pushHistory(next);
-                      }}
-                    />
-                  </label>
-                  <div className="mt-2 flex items-center gap-2">
-                    {[
-                      { value: "left", icon: AlignLeft, label: "left" },
-                      { value: "center", icon: AlignCenter, label: "center" },
-                      { value: "right", icon: AlignRight, label: "right" },
-                    ].map(({ value, icon: Icon, label }) => (
-                      <button
-                        key={value}
-                        onClick={() => {
-                          const base = Array.isArray(elementsRef.current)
-                            ? elementsRef.current
-                            : [];
-                          const next = base.map((item) =>
-                            item.id === selected.id
-                              ? {
-                                  ...item,
-                                  textAlign: value as
-                                    | "left"
-                                    | "center"
-                                    | "right",
-                                }
-                              : item,
-                          );
-                          pushHistory(next);
-                        }}
-                        className={`inline-flex h-10 w-10 items-center justify-center rounded-xl border transition ${
-                          (selected.textAlign ?? "left") === value
-                            ? "border-slate-900 bg-slate-900 text-white"
-                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                        }`}
-                        aria-label={label}
-                        title={label}
-                        type="button"
-                      >
-                        <Icon className="h-4 w-4" />
-                      </button>
-                    ))}
-                    <button
-                      onClick={() => {
-                        const base = Array.isArray(elementsRef.current)
-                          ? elementsRef.current
-                          : [];
-                        const next = base.map((item) =>
-                          item.id === selected.id
-                            ? {
-                                ...item,
-                                fontWeight:
-                                  (selected.fontWeight ?? 700) >= 700
-                                    ? 400
-                                    : 800,
-                              }
-                            : item,
-                        );
-                        pushHistory(next);
-                      }}
-                      className={`inline-flex h-10 w-10 items-center justify-center rounded-xl border transition ${
-                        (selected.fontWeight ?? 700) >= 700
-                          ? "border-slate-900 bg-slate-900 text-white"
-                          : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                      }`}
-                      aria-label="bold"
-                      title="bold"
-                      type="button"
-                    >
-                      <Bold className="h-4 w-4" />
-                    </button>
-                  </div>
-                  <div className="mt-3">
-                    <Range
-                      label="Мөр хооронд зай"
-                      value={selected.lineHeight ?? 1.2}
-                      min={1}
-                      max={2}
-                      step={0.05}
-                      onStart={beginSelectedEdit}
-                      onChange={(value) =>
-                        updateSelected({ lineHeight: value })
-                      }
-                      onCommit={finishSelectedEdit}
-                    />
-                  </div>
-                  <Range
-                    label="Үсгийн хэмжээ (px)"
-                    value={selected.fontSize ?? 40}
-                    min={fontSizeControlMin}
-                    max={fontSizeControlMax}
-                    step={fontSizeControlStep}
-                    onStart={beginSelectedEdit}
-                    onChange={(value) =>
-                      updateSelected({
-                        fontSize: Math.min(value, fontSizeControlMax),
-                        fontScale: 1,
-                      })
-                    }
-                    onCommit={finishSelectedEdit}
-                  />
-                </>
-              )}
-              {selected.type === "line" && (
-                <>
-                  <Range
-                    label="Шугамын урт"
-                    value={selected.width}
-                    min={80}
-                    max={900}
-                    onStart={beginSelectedEdit}
-                    onChange={(value) => updateSelected({ width: value })}
-                    onCommit={finishSelectedEdit}
-                  />
-                  <Range
-                    label="Шугамын зузаан"
-                    value={selected.lineThickness ?? 6}
-                    min={2}
-                    max={30}
-                    onStart={beginSelectedEdit}
-                    onChange={(value) =>
-                      updateSelected({ lineThickness: value, height: value })
-                    }
-                    onCommit={finishSelectedEdit}
-                  />
-                </>
-              )}
-              {selected.type === "logo" && (
-                <Range
-                  label="Өргөн"
-                  value={selected.width}
-                  min={60}
-                  max={900}
-                  onStart={beginSelectedEdit}
-                  onChange={(value) => updateSelected({ width: value })}
-                  onCommit={finishSelectedEdit}
-                />
-              )}
-              <Range
-                label="Тунгалагшил"
-                value={(selected.opacity ?? 1) * 100}
-                min={0}
-                max={100}
-                step={1}
-                onStart={beginSelectedEdit}
-                onChange={(value) => updateSelected({ opacity: value / 100 })}
-                onCommit={finishSelectedEdit}
-              />
-            </div>
-          </div>
-        </div>
-      )}
       {orderOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
-            <h2 className="text-xl font-bold">Захиалга илгээх</h2>
-            <input
-              placeholder="Нэр"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="mt-4 w-full rounded-xl border border-slate-200 p-3"
-            />
-            <input
-              placeholder="Утас"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              className="mt-3 w-full rounded-xl border border-slate-200 p-3"
-            />
-            <div className="mt-5 flex gap-2">
-              <button
-                type="button"
-                onClick={handleOrder}
-                disabled={isSendingOrder}
-                className="rounded-xl bg-green-600 px-4 py-3 font-bold text-white disabled:opacity-60"
-              >
-                {isSendingOrder ? "Илгээж байна..." : "Илгээх"}
-              </button>
-              <button
-                onClick={() => setOrderOpen(false)}
-                type="button"
-                className="flex-1 rounded-xl border border-slate-200 py-3 font-medium"
-              >
-                Болих
-              </button>
-            </div>
-          </div>
-        </div>
+        <OrderModal
+          name={name}
+          phone={phone}
+          isSendingOrder={isSendingOrder}
+          onNameChange={setName}
+          onPhoneChange={setPhone}
+          onSubmit={handleOrder}
+          onClose={() => setOrderOpen(false)}
+        />
       )}
       {showRegister && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60">
