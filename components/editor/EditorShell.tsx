@@ -1473,6 +1473,19 @@ Coffee * Dessert * Brunch.
                         }}
                       />
                     )}
+                    {guides.vertical !== null && (
+                      <div
+                        className="pointer-events-none absolute z-40 rounded-full"
+                        style={{
+                          left: guides.vertical * scale - 5,
+                          top: 12,
+                          width: 10,
+                          height: 10,
+                          backgroundColor: GUIDE_COLOR,
+                          boxShadow: `0 0 0 4px ${GUIDE_COLOR}22, 0 0 16px ${GUIDE_COLOR}AA`,
+                        }}
+                      />
+                    )}
                     {guides.horizontal !== null && (
                       <div
                         className="pointer-events-none absolute left-0 z-30"
@@ -1483,6 +1496,19 @@ Coffee * Dessert * Brunch.
                           backgroundColor: GUIDE_COLOR,
                           opacity: 1,
                           boxShadow: `0 0 0 1px ${GUIDE_COLOR}33, 0 0 8px ${GUIDE_COLOR}66`,
+                        }}
+                      />
+                    )}
+                    {guides.horizontal !== null && (
+                      <div
+                        className="pointer-events-none absolute z-40 rounded-full"
+                        style={{
+                          left: 12,
+                          top: guides.horizontal * scale - 5,
+                          width: 10,
+                          height: 10,
+                          backgroundColor: GUIDE_COLOR,
+                          boxShadow: `0 0 0 4px ${GUIDE_COLOR}22, 0 0 16px ${GUIDE_COLOR}AA`,
                         }}
                       />
                     )}
