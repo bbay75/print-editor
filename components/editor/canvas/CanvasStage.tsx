@@ -43,6 +43,7 @@ export default function CanvasStage({
         <CanvasItem
           key={item.id}
           element={item}
+          elements={elements}
           scale={scale}
           selected={item.id === selectedId}
           docWidth={docWidth}

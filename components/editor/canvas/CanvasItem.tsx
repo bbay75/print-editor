@@ -57,6 +57,7 @@ function getBrightness(hex: string) {
 
 function CanvasItem({
   element,
+  elements,
   scale,
   selected,
   docWidth,
@@ -72,6 +73,7 @@ function CanvasItem({
   onGuidesChange,
 }: {
   element: EditorElement;
+  elements: EditorElement[];
   scale: number;
   selected: boolean;
   docWidth: number;
@@ -240,6 +242,32 @@ function CanvasItem({
     }
     let centerX = snappedX + visualWidth / 2;
     const centerY = snappedY + visualHeight / 2;
+    elements.forEach((other) => {
+      if (other.id === element.id) return;
+      if (other.name === "AI BG") return;
+
+      const otherX = getElementX(other);
+      const otherY = getElementY(other);
+      const otherW = getElementWidth(other);
+      const otherH = getElementVisualHeight(other);
+
+      const otherCenterX = otherX + otherW / 2;
+      const otherCenterY = otherY + otherH / 2;
+
+      if (!snapped && Math.abs(centerX - otherCenterX) < SNAP_DISTANCE * 2) {
+        snappedX = otherCenterX - visualWidth / 2;
+        verticalGuide = otherCenterX;
+        refreshBounds();
+        snapped = true;
+      }
+
+      if (!snapped && Math.abs(centerY - otherCenterY) < SNAP_DISTANCE * 2) {
+        snappedY = otherCenterY - visualHeight / 2;
+        horizontalGuide = otherCenterY;
+        refreshBounds();
+        snapped = true;
+      }
+    });
     // 👉 ROLE-BASED SMART SNAP (soft, lock биш)
     if (!snapped && element.role === "primary") {
       if (Math.abs(centerX - docWidth / 2) < SNAP_DISTANCE_ROLE) {
