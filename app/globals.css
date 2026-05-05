@@ -85,3 +85,7 @@ textarea::-webkit-resizer {
 textarea::-webkit-scrollbar {
   display: none;
 }
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  margin: 0;
+}

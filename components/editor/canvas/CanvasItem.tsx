@@ -1,12 +1,12 @@
 "use client";
-
-import React, { useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import type { EditorElement } from "../core/editor-types";
 import { SNAP_DISTANCE, clamp, pxToMm } from "../core/editor-utils";
 import MiniActionBar from "./MiniActionBar";
 import TextItem from "./TextItem";
 import ImageItem from "./ImageItem";
 import LineItem from "./LineItem";
+import { Trash2 } from "lucide-react";
 import {
   estimateTextVisualHeight,
   getElementVisualHeight,
@@ -92,6 +92,11 @@ function CanvasItem({
   }) => void;
 }) {
   const boxRef = useRef<HTMLDivElement | null>(null);
+  const [isTextEditing, setIsTextEditing] = useState(false);
+
+  useEffect(() => {
+    if (!selected) setIsTextEditing(false);
+  }, [selected]);
   const bgImageRef = useRef<HTMLImageElement | null>(null);
   const latestDragPatchRef = useRef<Partial<EditorElement> | null>(null);
   const lastGuideUpdateRef = useRef(0);
@@ -112,6 +117,25 @@ function CanvasItem({
     baseH: number;
     changed: boolean;
   } | null>(null);
+  const touchPointsRef = useRef<Map<number, { x: number; y: number }>>(
+    new Map(),
+  );
+
+  const pinchRef = useRef<{
+    startDistance: number;
+    startFontSize: number;
+    changed: boolean;
+  } | null>(null);
+
+  const getPinchDistance = () => {
+    const points = Array.from(touchPointsRef.current.values());
+    if (points.length < 2) return 0;
+
+    const dx = points[0].x - points[1].x;
+    const dy = points[0].y - points[1].y;
+
+    return Math.sqrt(dx * dx + dy * dy);
+  };
 
   const logicalX = getElementX(element);
   const logicalY = getElementY(element);
@@ -123,7 +147,12 @@ function CanvasItem({
     element.type === "text"
       ? Math.max(storedH, estimatedTextHeight + textHeightPadding)
       : getElementVisualHeight(element);
-
+  const isOutOfSafe =
+    element.name !== "AI BG" &&
+    (logicalX < previewSafe ||
+      logicalY < previewSafe ||
+      logicalX + logicalW > docWidth - previewSafe ||
+      logicalY + logicalH > docHeight - previewSafe);
   let bgBrightness = 255;
   if (bgImageRef.current) {
     try {
@@ -334,6 +363,28 @@ function CanvasItem({
     if (target?.closest("button")) return;
     if (target?.closest("textarea")) return;
 
+    // ✅ MOBILE PINCH START
+    if (e.pointerType === "touch" && element.type === "text") {
+      touchPointsRef.current.set(e.pointerId, {
+        x: e.clientX,
+        y: e.clientY,
+      });
+
+      if (touchPointsRef.current.size === 2) {
+        dragRef.current = null;
+
+        pinchRef.current = {
+          startDistance: Math.max(getPinchDistance(), 1),
+          startFontSize: element.fontSize ?? 40,
+          changed: false,
+        };
+
+        onDragStart();
+        e.currentTarget.setPointerCapture?.(e.pointerId);
+        return;
+      }
+    }
+
     startDrag(e.clientX, e.clientY);
     e.currentTarget.setPointerCapture?.(e.pointerId);
   };
@@ -349,6 +400,36 @@ function CanvasItem({
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    // ✅ MOBILE PINCH MOVE
+    if (e.pointerType === "touch" && touchPointsRef.current.has(e.pointerId)) {
+      touchPointsRef.current.set(e.pointerId, {
+        x: e.clientX,
+        y: e.clientY,
+      });
+    }
+
+    if (pinchRef.current && element.type === "text") {
+      const currentDistance = getPinchDistance();
+
+      if (currentDistance > 0 && pinchRef.current.startDistance > 0) {
+        const ratio = currentDistance / pinchRef.current.startDistance;
+        const nextFontSize = clamp(
+          Math.round(pinchRef.current.startFontSize * ratio),
+          12,
+          3000,
+        );
+
+        pinchRef.current.changed = true;
+
+        onPatch({
+          fontSize: nextFontSize,
+          fontScale: 1,
+        });
+      }
+
+      return;
+    }
+
     if (!dragRef.current) return;
 
     const dx = (e.clientX - dragRef.current.startX) / scale;
@@ -380,7 +461,25 @@ function CanvasItem({
     }
   };
 
-  const handlePointerUp = () => {
+  const handlePointerUp = (e?: React.PointerEvent<HTMLDivElement>) => {
+    if (e?.pointerType === "touch") {
+      touchPointsRef.current.delete(e.pointerId);
+    }
+
+    if (pinchRef.current) {
+      const changed = pinchRef.current.changed;
+
+      pinchRef.current = null;
+      touchPointsRef.current.clear();
+
+      onGuidesChange({ vertical: null, horizontal: null });
+      onDragEnd();
+
+      if (changed) onCommit();
+
+      return;
+    }
+
     if (dragRef.current?.changed && latestDragPatchRef.current) {
       onPatch(latestDragPatchRef.current);
       onCommit();
@@ -396,6 +495,8 @@ function CanvasItem({
     latestDragPatchRef.current = null;
     dragRef.current = null;
     resizeRef.current = null;
+    pinchRef.current = null;
+    touchPointsRef.current.clear();
     onGuidesChange({ vertical: null, horizontal: null });
     onDragEnd();
   };
@@ -524,8 +625,24 @@ function CanvasItem({
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerCancel}
       onLostPointerCapture={handlePointerUp}
+      onDoubleClick={(e) => {
+        if (element.type !== "text") return;
+        e.stopPropagation();
+        setIsTextEditing(true);
+
+        requestAnimationFrame(() => {
+          const textarea = boxRef.current?.querySelector("textarea");
+          textarea?.focus();
+        });
+      }}
       className={`absolute touch-none ${
-        selected ? "ring-2 ring-blue-500 ring-offset-2" : ""
+        selected
+          ? isOutOfSafe
+            ? "ring-2 ring-red-500 ring-offset-2"
+            : "ring-2 ring-blue-500 ring-offset-2"
+          : isOutOfSafe
+            ? "ring-2 ring-red-400 ring-offset-1"
+            : ""
       }`}
       style={{
         left: (logicalX + previewBleed) * scale,
@@ -543,17 +660,15 @@ function CanvasItem({
               maxHeight: "none",
             }),
         overflow: "visible",
-        opacity: element.opacity,
         transform: `rotate(${element.rotation}deg)`,
-        zIndex: selected
-          ? 50
-          : element.name === "AI BG"
+        zIndex:
+          (element.name === "AI BG"
             ? 0
             : element.type === "logo"
-              ? 30
+              ? 40
               : element.type === "text"
                 ? 20
-                : 10,
+                : 10) + (selected ? 1 : 0),
       }}
     >
       {selected && (
@@ -566,10 +681,43 @@ function CanvasItem({
           }
         />
       )}
-
+      {selected && (
+        <button
+          onPointerDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onDelete();
+          }}
+          className="
+absolute
+top-0 right-0
+translate-x-1/2 -translate-y-1/2
+z-30
+h-7 w-7
+flex items-center justify-center
+rounded-full
+bg-white
+text-red-500
+shadow-md
+border border-red-200
+hover:bg-red-50
+"
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
+      )}
+      {isOutOfSafe && selected && (
+        <div className="pointer-events-none absolute -top-9 left-0 z-[999999] rounded-full bg-red-600 px-2 py-1 text-xs font-bold text-white shadow">
+          ⚠ Аюулгүйн бүс давсан
+        </div>
+      )}
       {element.type === "text" && (
         <TextItem
-          element={element}
+          element={{ ...element, isEditing: isTextEditing } as EditorElement}
           scale={scale}
           color={finalColor}
           textShadow={dynamicShadow}

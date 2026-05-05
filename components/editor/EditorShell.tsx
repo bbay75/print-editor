@@ -363,14 +363,9 @@ export default function EditorShell() {
           lineHeight: selected.lineHeight ?? 1.2,
           fontFamily: selected.fontFamily,
           role: selected.role,
-          maxBottomY:
-            typeof nextTextTop === "number" ? nextTextTop - 22 : undefined,
         })
       : 220;
-  const fontSizeControlMax = Math.max(
-    fontSizeControlMin,
-    safeAreaFitMaxFontSize,
-  );
+  const fontSizeControlMax = 3000;
   const fontSizeControlStep = 1;
   const addText = (role: TextRole = "support") => {
     const el = createTextElement(previewCanvasWidth, "Шинэ текст");
@@ -1241,7 +1236,8 @@ Coffee * Dessert * Brunch.
                     ? { ...item, textAlign: value }
                     : item,
                 );
-                pushHistory(next);
+                updateSelected({ textAlign: value });
+                finishSelectedEdit();
               }}
               onToggleBold={() => {
                 updateSelected({
@@ -1250,10 +1246,8 @@ Coffee * Dessert * Brunch.
                 finishSelectedEdit();
               }}
               onFontSizeChange={(value) => {
-                const nextFontSize = Math.min(value, fontSizeControlMax);
-
                 updateSelected({
-                  fontSize: nextFontSize,
+                  fontSize: value,
                   fontScale: 1,
                 });
               }}
