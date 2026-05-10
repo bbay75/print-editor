@@ -8,7 +8,7 @@ export async function POST(req: Request) {
     .from("users")
     .update({
       used_count: 0,
-      free_credits: 0,
+      credit_limit: 0,
     })
     .eq("phone", phone);
 
