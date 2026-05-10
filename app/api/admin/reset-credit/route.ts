@@ -6,7 +6,10 @@ export async function POST(req: Request) {
 
   await supabaseServer
     .from("users")
-    .update({ used_count: 0 })
+    .update({
+      used_count: 0,
+      free_credits: 0,
+    })
     .eq("phone", phone);
 
   return NextResponse.json({ ok: true });
