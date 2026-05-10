@@ -312,6 +312,9 @@ LAYOUT DECISION:
 - Do not choose randomly.
 - Choose the layout that best fits the visual composition naturally.
 - Do not choose layout by business category alone.
+- If the background concept includes people, faces, family, portrait, model, athlete, child, or character, avoid center layout.
+- For people/family/face backgrounds, prefer hero, split, or top-heavy with typography placed away from faces and bodies.
+- Never choose center layout when the center contains faces or people.
 
 Choose layout based on:
 - composition balance
@@ -511,6 +514,10 @@ Do NOT place the brightest highlight or strongest contrast inside that zone.
 The protected typography zone must remain calm, low-detail, and readable.
 The main subject must be clearly separated from the typography zone.
 The ENTIRE typography group must remain readable together.
+If the image contains people, faces, family, children, portraits, or characters:
+- faces and bodies must stay completely outside the full typography flow area
+- do not place editable text over eyes, mouth, face, body, hands, or skin
+- reserve a calm empty area beside them or above them for all text
 
 Do not protect only the headline area.
 Also protect:
