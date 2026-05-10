@@ -1,4 +1,4 @@
-import EditorShell from "@/components/editorbackup/EditorShell";
+import EditorShell from "@/components/editor/EditorShell";
 
 export default function EditorPage() {
   return <EditorShell />;
