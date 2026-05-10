@@ -11,34 +11,50 @@ export type LayoutPosition =
   | "bottom-center"
   | "bottom-right";
 
-export type LayoutType = "hero" | "center" | "top-heavy" | "split";
+export type LayoutType =
+  | "center"
+  | "top-heavy"
+  | "hero"
+  | "split"
+  | "split-balanced";
 
 export function getLayoutPosition(
   role: TextRole,
   layoutType: LayoutType,
 ): LayoutPosition {
   if (layoutType === "center") {
-    if (role === "primary") return "top-center";
+    if (role === "primary") return "center";
+    if (role === "secondary") return "bottom-center";
+    if (role === "support") return "top-center";
     if (role === "contact") return "bottom-center";
-    return "center";
   }
 
   if (layoutType === "top-heavy") {
-    if (role === "primary") return "top-center";
-    if (role === "contact") return "bottom-center";
-    return "center";
+    if (role === "primary") return "top-left";
+    if (role === "secondary") return "center-left";
+    if (role === "support") return "center-left";
+    if (role === "contact") return "bottom-left";
   }
 
   if (layoutType === "hero") {
-    if (role === "primary") return "top-center";
-    if (role === "contact") return "bottom-center";
-    return "center";
+    if (role === "primary") return "bottom-left";
+    if (role === "secondary") return "bottom-left";
+    if (role === "support") return "bottom-left";
+    if (role === "contact") return "top-left";
   }
 
   if (layoutType === "split") {
     if (role === "primary") return "center-left";
+    if (role === "secondary") return "center-right";
+    if (role === "support") return "center-right";
     if (role === "contact") return "bottom-left";
-    return "center-right";
+  }
+
+  if (layoutType === "split-balanced") {
+    if (role === "primary") return "top-center";
+    if (role === "secondary") return "center-left";
+    if (role === "support") return "center-right";
+    if (role === "contact") return "bottom-center";
   }
 
   return "center";
@@ -77,28 +93,20 @@ export function getPositionXY(params: {
   switch (position) {
     case "top-left":
       return { x: left, y: top, textAlign: "left" as const };
-
     case "top-center":
       return { x: centerX, y: top, textAlign: "center" as const };
-
     case "top-right":
       return { x: right, y: top, textAlign: "right" as const };
-
     case "center-left":
       return { x: left, y: centerY, textAlign: "left" as const };
-
     case "center":
       return { x: centerX, y: centerY, textAlign: "center" as const };
-
     case "center-right":
-      return { x: right, y: centerY, textAlign: "right" as const };
-
+      return { x: right, y: centerY, textAlign: "left" as const };
     case "bottom-left":
       return { x: left, y: bottom, textAlign: "left" as const };
-
     case "bottom-center":
       return { x: centerX, y: bottom, textAlign: "center" as const };
-
     case "bottom-right":
       return { x: right, y: bottom, textAlign: "right" as const };
   }

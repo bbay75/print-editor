@@ -1,3 +1,9 @@
+import type { EditorElement, TextRole } from "../core/editor-types";
+import { clamp, makeId, pxToMm } from "../core/editor-utils";
+import {
+  getRoleLayoutConfig,
+  fitFontSizeSmart,
+} from "../core/editor-typography";
 import {
   getLayoutPosition,
   getPositionXY,
@@ -5,96 +11,66 @@ import {
   type LayoutType,
 } from "./layout-engine";
 
-type TextRole = "primary" | "secondary" | "support" | "contact";
-
-function makeId() {
-  return Math.random().toString(36).slice(2, 10);
-}
-
-function pxToMm(px: number) {
-  return px * 0.264583;
-}
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(Math.max(value, min), max);
-}
+type BuildAiElementsParams = {
+  data: any;
+  widthMm: number;
+  heightMm: number;
+  previewCanvasWidth: number;
+  previewCanvasHeight: number;
+  previewSafe: number;
+  layoutType: LayoutType;
+};
 
 function looksLikeContact(text: string) {
   return /(\+?\d[\d\s-]{5,})/.test(text);
 }
 
-function getRoleLayoutConfig(
-  role: TextRole,
-  canvasWidth: number,
-  canvasHeight: number,
-) {
-  const shortSide = Math.min(canvasWidth, canvasHeight);
+function normalizeRole(rawRole: unknown, text: string): TextRole {
+  const role = String(rawRole || "").toLowerCase();
+
+  if (role === "headline" || role === "primary" || role === "title") {
+    return "primary";
+  }
+
+  if (role === "subtitle" || role === "secondary") {
+    return "secondary";
+  }
+
+  if (role === "contact" || role === "phone" || looksLikeContact(text)) {
+    return "contact";
+  }
+
+  if (role === "cta" || role === "support" || role === "line") {
+    return "support";
+  }
+
+  return text.length <= 28 ? "support" : "secondary";
+}
+
+function getTextName(role: TextRole) {
+  if (role === "primary") return "Primary";
+  if (role === "contact") return "Contact";
+  if (role === "secondary") return "Secondary";
+  return "Support";
+}
+
+function getInitialShadow(role: TextRole, layoutType: LayoutType) {
+  if (role === "primary" && layoutType === "hero") {
+    return "0 3px 12px rgba(0,0,0,0.22)";
+  }
 
   if (role === "primary") {
-    return {
-      boxHeight: canvasHeight * 0.18,
-      gap: canvasHeight * 0.01,
-      minFont: shortSide * 0.095,
-      maxFont: shortSide * 0.24,
-      lineHeight: 0.96,
-      fontWeight: 850,
-    };
+    return "0 2px 10px rgba(0,0,0,0.18)";
   }
 
-  if (role === "secondary") {
-    return {
-      boxHeight: canvasHeight * 0.085,
-      gap: canvasHeight * 0.008,
-      minFont: shortSide * 0.036,
-      maxFont: shortSide * 0.085,
-      lineHeight: 1.04,
-      fontWeight: 650,
-    };
-  }
-
-  if (role === "contact") {
-    return {
-      boxHeight: canvasHeight * 0.09,
-      gap: canvasHeight * 0.006,
-      minFont: shortSide * 0.026,
-      maxFont: shortSide * 0.055,
-      lineHeight: 1.02,
-      fontWeight: 700,
-    };
-  }
-
-  return {
-    boxHeight: canvasHeight * 0.075,
-    gap: canvasHeight * 0.008,
-    minFont: shortSide * 0.03,
-    maxFont: shortSide * 0.065,
-    lineHeight: 1.04,
-    fontWeight: 600,
-  };
+  return "0 1px 4px rgba(0,0,0,0.12)";
 }
 
-function fitFontSizeSmart(
-  text: string,
-  role: TextRole,
-  boxWidth: number,
-  boxHeight: number,
-  canvasWidth: number,
-  canvasHeight: number,
-) {
-  const cfg = getRoleLayoutConfig(role, canvasWidth, canvasHeight);
-  const safeText = (text || "").trim() || "Text";
-  const lines = safeText.split("\n");
-  const longest = Math.max(...lines.map((line) => line.length), 6);
-
-  const byWidth = boxWidth / Math.max(longest * 0.5, 4);
-  const byHeight =
-    boxHeight / Math.max(lines.length * (cfg.lineHeight || 1.1), 1);
-
-  return Math.round(
-    clamp(Math.min(byWidth, byHeight), cfg.minFont, cfg.maxFont),
-  );
-}
-
+/**
+ * Converts raw AI JSON into EditorElement objects.
+ * This file should NOT do final design balancing.
+ * Final layout decisions live in designer-layout.ts.
+ */
 export function buildAiElements({
   data,
   widthMm,
@@ -103,19 +79,11 @@ export function buildAiElements({
   previewCanvasHeight,
   previewSafe,
   layoutType,
-}: {
-  data: any;
-  widthMm: number;
-  heightMm: number;
-  previewCanvasWidth: number;
-  previewCanvasHeight: number;
-  previewSafe: number;
-  layoutType: LayoutType;
-}) {
-  const nextElements: any[] = [];
+}: BuildAiElementsParams): EditorElement[] {
+  const elements: EditorElement[] = [];
 
-  if (data.image) {
-    nextElements.push({
+  if (typeof data?.image === "string" && data.image.trim()) {
+    elements.push({
       id: makeId(),
       type: "logo",
       name: "AI BG",
@@ -131,86 +99,40 @@ export function buildAiElements({
       opacity: 1,
       src: data.image,
       borderRadius: 0,
-      aspectRatio: previewCanvasWidth / previewCanvasHeight,
+      aspectRatio: previewCanvasWidth / Math.max(previewCanvasHeight, 1),
     });
   }
+
+  const texts: any[] = Array.isArray(data?.texts) ? data.texts : [];
+  if (texts.length === 0) return elements;
 
   const safeLeft = previewSafe;
   const safeTop = previewSafe;
   const safeRight = previewCanvasWidth - previewSafe;
   const safeBottom = previewCanvasHeight - previewSafe;
-  const safeWidth = Math.max(260, safeRight - safeLeft);
+  const safeWidth = Math.max(80, safeRight - safeLeft);
 
-  const texts: any[] = Array.isArray(data.texts) ? data.texts : [];
+  texts.forEach((item) => {
+    const text = String(item?.text || "").trim();
+    if (!text) return;
 
-  texts.forEach((t: any) => {
-    const rawText = String(t.text || "").trim();
-    if (!rawText) return;
-
-    const sourceRole =
-      t.role === "headline" || t.role === "cta" ? t.role : "line";
-
-    const mappedRole: TextRole =
-      sourceRole === "headline"
-        ? "primary"
-        : looksLikeContact(rawText)
-          ? "contact"
-          : rawText.length <= 28
-            ? "support"
-            : "secondary";
-
-    const cfg = getRoleLayoutConfig(
-      mappedRole,
+    const role = normalizeRole(item?.role, text);
+    const style = getRoleLayoutConfig(
+      role,
       previewCanvasWidth,
       previewCanvasHeight,
     );
 
-    const boxHeight = cfg.boxHeight;
-    const avgCharWidth = previewCanvasWidth * 0.02;
-
-    const estimatedWidth = rawText.length * avgCharWidth;
-
+    const estimatedWidth = text.length * previewCanvasWidth * 0.018;
     const boxWidth = clamp(
       estimatedWidth,
-      previewCanvasWidth * 0.25,
-      safeWidth * 0.9,
+      Math.min(260, safeWidth),
+      safeWidth * 0.92,
     );
 
-    const safeFontSize = fitFontSizeSmart(
-      rawText,
-      mappedRole,
-      boxWidth,
-      boxHeight,
-      previewCanvasWidth,
-      previewCanvasHeight,
-    );
+    const boxHeight = style.boxHeight;
 
-    let finalFontSize = safeFontSize;
-    let finalShadow = "0 2px 8px rgba(0,0,0,0.18)";
-
-    if (layoutType === "hero" && mappedRole === "primary") {
-      finalFontSize = safeFontSize * 1.4;
-      finalShadow = "0 8px 30px rgba(0,0,0,0.7)";
-    }
-
-    if (layoutType === "top-heavy" && mappedRole === "primary") {
-      finalFontSize = safeFontSize * 1.2;
-      finalShadow = "0 6px 20px rgba(0,0,0,0.6)";
-    }
-
-    if (layoutType === "split" && mappedRole === "primary") {
-      finalShadow = "0 5px 18px rgba(0,0,0,0.55)";
-    }
-
-    if (layoutType === "hero" && mappedRole !== "primary") {
-      finalFontSize = safeFontSize * 0.8;
-    }
-
-    const position = getLayoutPosition(
-      mappedRole,
-      layoutType,
-    ) as LayoutPosition;
-
+    const position = getLayoutPosition(role, layoutType) as LayoutPosition;
     const placed = getPositionXY({
       position,
       boxWidth,
@@ -221,57 +143,48 @@ export function buildAiElements({
       safeBottom,
     });
 
-    let finalX = placed.x;
-    let finalY = placed.y;
+    const fontSize = fitFontSizeSmart(
+      text,
+      role,
+      boxWidth,
+      boxHeight,
+      previewCanvasWidth,
+      previewCanvasHeight,
+    );
 
-    if (layoutType === "split") {
-      if (mappedRole === "primary") {
-        finalX = safeLeft + safeWidth * 0.05;
-      } else {
-        finalX = safeLeft + safeWidth * 0.55;
-      }
-    }
+    const color =
+      typeof item?.color === "string" && item.color.trim()
+        ? item.color.trim()
+        : undefined;
 
-    nextElements.push({
+    elements.push({
       id: makeId(),
       type: "text",
-      name:
-        mappedRole === "primary"
-          ? "Primary"
-          : mappedRole === "contact"
-            ? "Contact"
-            : "Secondary",
-      role: mappedRole,
-      text: rawText,
-      x: finalX,
-      y: finalY,
-      xMm: pxToMm(finalX),
-      yMm: pxToMm(finalY),
+      name: getTextName(role),
+      role,
+      text,
+      x: placed.x,
+      y: placed.y,
       width: boxWidth,
       height: boxHeight,
+      xMm: pxToMm(placed.x),
+      yMm: pxToMm(placed.y),
       widthMm: pxToMm(boxWidth),
       heightMm: pxToMm(boxHeight),
       rotation: 0,
       opacity: 1,
-      color:
-        typeof t.color === "string" && t.color.trim()
-          ? t.color.trim()
-          : mappedRole === "primary"
-            ? "#f8fafc"
-            : mappedRole === "contact"
-              ? "#facc15"
-              : "#e5e7eb",
-      fontSize: finalFontSize,
+      color: color,
+      fontSize,
       fontScale: 1,
-      fontWeight: cfg.fontWeight,
+      fontWeight: style.fontWeight,
       fontFamily: "var(--font-inter), Inter, sans-serif",
       textAlign: placed.textAlign,
-      lineHeight: cfg.lineHeight,
+      lineHeight: style.lineHeight,
       borderRadius: 0,
-      textShadow: finalShadow,
+      textShadow: getInitialShadow(role, layoutType),
       position,
     });
   });
 
-  return nextElements;
+  return elements;
 }

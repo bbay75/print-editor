@@ -1,4 +1,5 @@
 "use client";
+import NextImage from "next/image";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { toPng } from "html-to-image";
 import toast from "react-hot-toast";
@@ -15,6 +16,7 @@ import { validateBeforeAI } from "./validation/validate-before-ai";
 import { buildLayoutElements } from "./ai/apply-layout";
 import { buildDesignerLayout } from "./ai/designer-layout";
 import { measureTextHeightForFont } from "./core/editor-typography";
+import AiTipsModal from "./modals/AiTipsModal";
 import {
   GUIDE_COLOR,
   EXPORT_DPI,
@@ -35,6 +37,7 @@ import {
   Plus,
   Printer,
   ImagePlus,
+  Info,
   PanelTopClose,
 } from "lucide-react";
 function getSafeAreaFitMaxFontSize({
@@ -152,6 +155,14 @@ function clampTextElementIntoCanvas(
 }
 
 export default function EditorShell() {
+  const layoutLabelMap = {
+    center: "Center",
+    "top-heavy": "Top Heavy",
+    hero: "Hero",
+    split: "Split",
+    "split-balanced": "Split Balanced",
+  };
+
   const [doc, setDoc] = useState<{
     widthMm: string | number;
     heightMm: string | number;
@@ -191,6 +202,8 @@ export default function EditorShell() {
   const [accessUsed, setAccessUsed] = useState<number | null>(null);
   const lastRemainingRef = useRef<number | null>(null);
   const [creditFlash, setCreditFlash] = useState(false);
+  const [layoutMenuOpen, setLayoutMenuOpen] = useState(false);
+  const [tipsOpen, setTipsOpen] = useState(false);
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     setIsKiosk(params.get("kiosk") === "1");
@@ -544,7 +557,8 @@ export default function EditorShell() {
         data.layoutType === "center" ||
         data.layoutType === "top-heavy" ||
         data.layoutType === "hero" ||
-        data.layoutType === "split"
+        data.layoutType === "split" ||
+        data.layoutType === "split-balanced"
           ? data.layoutType
           : layoutType;
 
@@ -650,6 +664,7 @@ export default function EditorShell() {
   };
   const applyLayout = (type: LayoutType) => {
     setLayoutType(type);
+
     const next = buildDesignerLayout({
       elements: elementsRef.current,
       type,
@@ -657,6 +672,7 @@ export default function EditorShell() {
       previewCanvasHeight,
       previewSafe,
     });
+
     pushHistory(next);
   };
   const resetSession = () => {
@@ -672,17 +688,21 @@ export default function EditorShell() {
       toast.error("Нэр, утсаа оруулна уу");
       return;
     }
+
     try {
       const data = await registerUser(
         registerName.trim(),
         registerPhone.trim(),
       );
+
       localStorage.setItem("print_editor_user_registered", "1");
       localStorage.setItem("user_phone", registerPhone.trim());
+
       setIsRegistered(true);
       setShowRegister(false);
       setRegisterName("");
       setRegisterPhone("");
+
       toast.success(
         data.alreadyExists
           ? "Бүртгэлтэй хэрэглэгчээр нэвтэрлээ"
@@ -698,20 +718,41 @@ export default function EditorShell() {
     reader.onload = () => {
       const img = new Image();
       img.onload = () => {
-        const maxWidth = 320;
         const aspectRatio = img.width / img.height;
-        const width = maxWidth;
+
+        const logoMaxWidth = Math.min(
+          previewCanvasWidth * 0.12,
+          previewCanvasHeight * 0.16,
+          220,
+        );
+
+        const width = Math.max(70, logoMaxWidth);
         const height = Math.round(width / aspectRatio);
+
+        const logoGap = Math.max(previewSafe * 0.7, previewCanvasWidth * 0.025);
+
+        const logoX = previewCanvasWidth - previewSafe - logoGap - width;
+        const logoY = previewSafe + logoGap;
+
+        const finalLogoX = Math.min(
+          Math.max(previewSafe, logoX),
+          previewCanvasWidth - previewSafe - width,
+        );
+
+        const finalLogoY = Math.min(
+          Math.max(previewSafe, logoY),
+          previewCanvasHeight - previewSafe - height,
+        );
         const logoElement: EditorElement = {
           id: makeId(),
           type: "logo",
           name: "Лого",
-          x: 120,
-          y: 360,
+          x: finalLogoX,
+          y: finalLogoY,
           width,
           height,
-          xMm: pxToMm(120),
-          yMm: pxToMm(360),
+          xMm: pxToMm(finalLogoX),
+          yMm: pxToMm(finalLogoY),
           widthMm: pxToMm(width),
           heightMm: pxToMm(height),
           rotation: 0,
@@ -908,6 +949,7 @@ export default function EditorShell() {
       className="min-h-screen bg-slate-100 text-slate-900"
       onPointerDown={() => {
         setSelectedId(null);
+        setLayoutMenuOpen(false);
       }}
     >
       <div className="mx-auto grid max-w-[1700px] grid-cols-1 gap-4 p-3 xl:grid-cols-[360px_minmax(0,1fr)] md:p-4">
@@ -929,7 +971,7 @@ export default function EditorShell() {
 САРАН КАФЕ гарчигтай.
 Coffee * Dessert * Brunch.
 Утас: 99112233....)"
-            className="mt-4 min-h-36 w-full rounded-2xl border border-slate-200 p-3 text-sm outline-none transition focus:border-blue-500"
+            className="mt-4 min-h-36 w-full resize-y overflow-auto rounded-2xl border border-slate-200 p-3 text-sm outline-none transition focus:border-blue-500"
           />
           {!isKiosk && (
             <div className="mt-2 text-sm text-slate-500">
@@ -960,48 +1002,14 @@ Coffee * Dessert * Brunch.
               )}
             </div>
           )}
-          <button
-            onClick={runAiText}
-            type="button"
-            className={`mt-3 inline-flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-bold ${
-              !isRegistered && generateCount >= MAX_FREE
-                ? "bg-gray-400 text-white"
-                : "bg-slate-900 text-white hover:bg-slate-800"
-            }`}
-          >
-            {!isRegistered && generateCount >= MAX_FREE
-              ? "Бүртгүүлж үргэлжлүүлэх"
-              : "AI текст үүсгэх"}
-          </button>
-          {isKiosk && (
-            <button
-              type="button"
-              onClick={resetSession}
-              className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-            >
-              🔄 Шинэ хэрэглэгч
-            </button>
-          )}
-          {aiTips.length > 0 && (
-            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4">
-              <div className="text-sm font-bold text-amber-900">
-                💡 AI зөвлөгөө
-              </div>
-              <div className="mt-2 space-y-2 text-sm text-amber-800">
-                {aiTips.map((tip, index) => (
-                  <div key={index}>• {tip}</div>
-                ))}
-              </div>
-            </div>
-          )}
-          <div className="mt-8 border-t border-slate-200 pt-6">
+          <div className="mt-3 border-t border-slate-200 pt-4">
             <div className="text-lg font-bold text-slate-900">
               Хэвлэлийн хэмжээ
             </div>
             <p className="mt-1 text-sm text-slate-500">
               Document-ийн бодит хэмжээг мм-ээр оруулна.
             </p>
-            <div className="mt-4 grid grid-cols-2 gap-3">
+            <div className="mt-2 grid grid-cols-2 gap-3">
               <label className="grid gap-1.5 text-sm">
                 <span>Өргөн (mm)</span>
                 <input
@@ -1150,30 +1158,31 @@ Coffee * Dessert * Brunch.
               </label>
             </div>
           </div>
-          <div className="mt-8 border-t border-slate-200 pt-6">
-            <div className="text-lg font-bold text-slate-900">Лого оруулах</div>
-            <p className="mt-1 text-sm text-slate-500">
-              PNG, JPG логогоо canvas дээр нэмнэ.
-            </p>
-            <input
-              ref={logoInputRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) handleLogoUpload(file);
-              }}
-            />
+
+          <button
+            onClick={runAiText}
+            type="button"
+            className={`mt-3 inline-flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-bold ${
+              !isRegistered && generateCount >= MAX_FREE
+                ? "bg-gray-400 text-white"
+                : "bg-slate-900 text-white hover:bg-slate-800"
+            }`}
+          >
+            {!isRegistered && generateCount >= MAX_FREE
+              ? "Бүртгүүлж үргэлжлүүлэх"
+              : "AI текст үүсгэх"}
+          </button>
+          {isKiosk && (
             <button
-              onClick={() => logoInputRef.current?.click()}
               type="button"
-              className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
+              onClick={resetSession}
+              className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
             >
-              <ImagePlus className="h-4 w-4" />
-              Лого upload
+              🔄 Шинэ хэрэглэгч
             </button>
-            <div className="mt-6 rounded-2xl bg-slate-50 p-4 text-sm text-slate-700">
+          )}
+          <div className="mt-2">
+            <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-700">
               <div className="font-semibold text-slate-900">
                 Харагдац ба экспорт
               </div>
@@ -1193,23 +1202,26 @@ Coffee * Dessert * Brunch.
                 />
                 <span>Тайрах тэмдэг оруулах</span>
               </label>
-              <p className="mt-3 text-xs text-slate-500">
-                Чиглүүлэгч шугам нь зөвхөн edit дээр харагдана. Тайрах тэмдэг нь
-                PDF дээр хүсвэл л орно.
-              </p>
-            </div>
-            <div className="mt-6 rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
-              <div className="font-semibold text-slate-900">Төлөв</div>
-              <div className="mt-1">{status}</div>
-              <div className="mt-1 text-xs text-slate-500">
-                Export quality: {EXPORT_DPI} DPI
-              </div>
-              <div className="mt-1 text-xs text-slate-500">
-                Хэмжээ: {doc.widthMm} × {doc.heightMm} mm
-              </div>
-              <div className="mt-1 text-xs text-slate-500">
-                Илүүдэл зай: {doc.bleedMm} mm · Аюулгүй бүс: {doc.safeMm} mm
-              </div>
+              <details className="mt-3 border-t border-slate-200 pt-3 text-xs text-slate-500">
+                <summary className="cursor-pointer select-none font-semibold text-slate-700">
+                  Төлөв: {status}
+                </summary>
+
+                <div className="mt-2">Export quality: {EXPORT_DPI} DPI</div>
+
+                <div className="mt-1">
+                  Хэмжээ: {doc.widthMm} × {doc.heightMm} mm
+                </div>
+
+                <div className="mt-1">
+                  Илүүдэл зай: {doc.bleedMm} mm · Аюулгүй бүс: {doc.safeMm} mm
+                </div>
+
+                <div className="mt-1">
+                  Чиглүүлэгч шугам нь зөвхөн edit дээр харагдана. Тайрах тэмдэг
+                  нь PDF дээр хүсвэл л орно.
+                </div>
+              </details>
             </div>
           </div>
 
@@ -1255,7 +1267,7 @@ Coffee * Dessert * Brunch.
           )}
         </aside>
         <section
-          className="min-w-0 rounded-3xl bg-white p-3 shadow-sm md:p-4"
+          className="flex min-h-[calc(100vh-2rem)] min-w-0 flex-col overflow-hidden rounded-3xl bg-white shadow-sm"
           onPointerDown={(e) => {
             if (e.target === e.currentTarget) {
               setSelectedId(null);
@@ -1263,90 +1275,160 @@ Coffee * Dessert * Brunch.
           }}
         >
           <div
-            className="relative rounded-3xl bg-slate-100 p-2 md:p-4"
+            className="flex min-h-0 flex-1 flex-col bg-slate-100"
             onPointerDown={(e) => {
               if (e.target === e.currentTarget) {
                 setSelectedId(null);
               }
             }}
           >
-            <div className="sticky top-2 z-[100] pointer-events-auto mx-auto mb-4 w-full max-w-[900px] rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-lg">
-              <div className="flex flex-wrap items-center justify-center gap-2">
-                <ToolbarButton icon={Undo2} label="Буцаах" onClick={undo} />
-                <ToolbarButton icon={Redo2} label="Дахин" onClick={redo} />
-                <ToolbarButton
-                  icon={Type}
-                  label="Текст"
-                  onClick={() => changeRole("support")}
-                />
-                <ToolbarButton
+            <div className="sticky top-0 z-[100] border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur">
+              <div className="flex min-h-14 flex-wrap items-center justify-center gap-3">
+                <div className="mr-4 leading-none">
+                  <div className="mr-4 flex items-center">
+                    <NextImage
+                      src="/logo.png"
+                      alt="NEGUN"
+                      width={120}
+                      height={32}
+                      className="h-8 w-auto object-contain"
+                      priority
+                    />
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <ToolbarButton icon={Undo2} label="Буцаах" onClick={undo} />
+                  <ToolbarButton icon={Redo2} label="Дахин" onClick={redo} />
+                  <ToolbarButton
+                    icon={Type}
+                    label="Текст"
+                    onClick={() => changeRole("support")}
+                  />
+                  <ToolbarButton
+                    icon={ImagePlus}
+                    label="Лого"
+                    onClick={() => logoInputRef.current?.click()}
+                  />
+                  {/* <ToolbarButton
                   icon={PanelTopClose}
                   label="Шугам"
                   onClick={addLine}
-                />
-                <div className="mx-1 hidden h-8 w-px bg-slate-200 md:block" />
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() =>
-                      setScale((prev) => Math.max(prev - 0.01, 0.01))
-                    }
-                    type="button"
-                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold"
+                /> */}
+                  <div className="mx-1 hidden h-8 w-px bg-slate-200 md:block" />
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() =>
+                        setScale((prev) => Math.max(prev - 0.01, 0.01))
+                      }
+                      type="button"
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold"
+                    >
+                      <Minus className="h-4 w-4" />
+                    </button>
+                    <span className="min-w-14 text-center text-sm font-semibold">
+                      {Math.round(scale * 100)}%
+                    </span>
+                    <button
+                      onClick={() =>
+                        setScale((prev) => Math.min(prev + 0.01, 3))
+                      }
+                      type="button"
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold"
+                    >
+                      <Plus className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  <div
+                    className="relative"
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                    }}
                   >
-                    <Minus className="h-4 w-4" />
-                  </button>
-                  <span className="min-w-14 text-center text-sm font-semibold">
-                    {Math.round(scale * 100)}%
-                  </span>
+                    <button
+                      onClick={() => setLayoutMenuOpen((prev) => !prev)}
+                      className="rounded-xl border px-4 py-1.5 text-sm font-medium bg-white"
+                    >
+                      {layoutLabelMap[layoutType]} ▼
+                    </button>
+
+                    {layoutMenuOpen && (
+                      <div className="absolute top-full left-0 mt-2 w-48 rounded-2xl border bg-white shadow-xl p-2 z-50">
+                        <button
+                          onClick={() => {
+                            applyLayout("center");
+                            setLayoutMenuOpen(false);
+                          }}
+                          className="w-full rounded-xl px-3 py-2 text-left text-sm hover:bg-slate-100"
+                        >
+                          Center
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            applyLayout("top-heavy");
+                            setLayoutMenuOpen(false);
+                          }}
+                          className="w-full rounded-xl px-3 py-2 text-left text-sm hover:bg-slate-100"
+                        >
+                          Top Heavy
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            applyLayout("hero");
+                            setLayoutMenuOpen(false);
+                          }}
+                          className="w-full rounded-xl px-3 py-2 text-left text-sm hover:bg-slate-100"
+                        >
+                          Hero
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            applyLayout("split");
+                            setLayoutMenuOpen(false);
+                          }}
+                          className="w-full rounded-xl px-3 py-2 text-left text-sm hover:bg-slate-100"
+                        >
+                          Split
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            applyLayout("split-balanced");
+                            setLayoutMenuOpen(false);
+                          }}
+                          className="w-full rounded-xl px-3 py-2 text-left text-sm hover:bg-slate-100"
+                        >
+                          Split Balanced
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  <ToolbarButton
+                    icon={Printer}
+                    label="PDF"
+                    onClick={exportToPDF}
+                  />
                   <button
-                    onClick={() => setScale((prev) => Math.min(prev + 0.01, 3))}
-                    type="button"
-                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold"
+                    onClick={() => setTipsOpen(true)}
+                    className="rounded-xl border border-slate-200 bg-white p-2 hover:bg-slate-50"
                   >
-                    <Plus className="h-4 w-4" />
+                    <Info className="h-5 w-5 text-slate-600" />
                   </button>
+                  <ToolbarButton
+                    icon={Printer}
+                    label="Хэвлүүлэх"
+                    onClick={() => setOrderOpen(true)}
+                    variant="primary"
+                  />
                 </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => applyLayout("center")}
-                    className="rounded-xl border px-3 py-1 text-sm"
-                  >
-                    Center
-                  </button>
-                  <button
-                    onClick={() => applyLayout("top-heavy")}
-                    className="rounded-xl border px-3 py-1 text-sm"
-                  >
-                    Top
-                  </button>
-                  <button
-                    onClick={() => applyLayout("hero")}
-                    className="rounded-xl border px-3 py-1 text-sm"
-                  >
-                    Hero
-                  </button>
-                  <button
-                    onClick={() => applyLayout("split")}
-                    className="rounded-xl border px-3 py-1 text-sm"
-                  >
-                    Split
-                  </button>
-                </div>
-                <ToolbarButton
-                  icon={Printer}
-                  label="PDF"
-                  onClick={exportToPDF}
-                />
-                <ToolbarButton
-                  icon={Printer}
-                  label="Хэвлүүлэх"
-                  onClick={() => setOrderOpen(true)}
-                  variant="primary"
-                />
               </div>
             </div>
             <div
-              className="relative mx-auto flex min-h-[60vh] w-full items-start justify-start overflow-x-auto overflow-y-visible pt-14 md:justify-center"
+              className="relative mx-auto flex min-h-0 flex-1 w-full items-start justify-start overflow-x-auto overflow-y-visible p-6 md:justify-center"
               onPointerDown={(e) => {
                 if (e.target === e.currentTarget) {
                   setSelectedId(null);
@@ -1398,12 +1480,22 @@ Coffee * Dessert * Brunch.
                         "linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)",
                     }}
                   >
-                    <div
-                      className="pointer-events-none absolute inset-0 rounded-[30px]"
-                      style={{
-                        boxShadow: `inset 0 0 0 ${previewBleed * scale}px rgba(239, 68, 68, 0.06)`,
-                      }}
-                    />
+                    {includeCropMarks && (
+                      <div className="pointer-events-none absolute inset-0 z-[90]">
+                        {[
+                          "left-0 top-0 border-l-2 border-t-2",
+                          "right-0 top-0 border-r-2 border-t-2",
+                          "left-0 bottom-0 border-l-2 border-b-2",
+                          "right-0 bottom-0 border-r-2 border-b-2",
+                        ].map((cls) => (
+                          <div
+                            key={cls}
+                            className={`absolute h-6 w-6 border-red-500 ${cls}`}
+                          />
+                        ))}
+                      </div>
+                    )}
+
                     {isAiLoading && (
                       <div className="absolute inset-0 z-[80] flex flex-col items-center justify-center rounded-[30px] bg-white/80 backdrop-blur-sm">
                         <div className="h-10 w-10 animate-spin rounded-full border-4 border-slate-300 border-t-blue-600" />
@@ -1514,6 +1606,14 @@ Coffee * Dessert * Brunch.
                 )}
               </div>
             </div>
+
+            <div className="flex h-10 shrink-0 items-center justify-between border-t border-slate-200 bg-white px-4 text-xs text-slate-500">
+              <div className="font-medium text-slate-700">
+                {doc.widthMm || "—"} × {doc.heightMm || "—"} mm
+              </div>
+              <div>{EXPORT_DPI} DPI</div>
+              <div>Scale: {Math.round(scale * 100)}%</div>
+            </div>
           </div>
         </section>
       </div>
@@ -1574,6 +1674,11 @@ Coffee * Dessert * Brunch.
       {showAdminModal && (
         <RegisterModal onClose={() => setShowAdminModal(false)} />
       )}
+      <AiTipsModal
+        open={tipsOpen}
+        onClose={() => setTipsOpen(false)}
+        aiTips={aiTips}
+      />
     </main>
   );
 }

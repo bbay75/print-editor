@@ -29,6 +29,25 @@ function pickRegisteredFontName(fontFamily?: string, fontWeight?: number) {
 
   return isBold ? "bold" : "regular";
 }
+function hasCJK(text: string) {
+  return /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]/.test(text);
+}
+
+function hasCyrillic(text: string) {
+  return /[\u0400-\u04FF]/.test(text);
+}
+
+function pickSafePdfFont(el: EditorElement) {
+  const text = el.text || "";
+
+  // 🔥 CJK → заавал fallback
+  if (hasCJK(text)) {
+    return "noto-cjk";
+  }
+
+  // 🔥 Бусад бүх тохиолдолд user font ашиглана
+  return pickRegisteredFontName(el.fontFamily, el.fontWeight);
+}
 
 const execFileAsync = promisify(execFile);
 
@@ -444,6 +463,10 @@ export async function POST(req: Request) {
       "marck-regular",
       path.join(process.cwd(), "public/fonts/MarckScript-Regular.ttf"),
     );
+    pdf.registerFont(
+      "noto-cjk",
+      path.join(process.cwd(), "public/fonts/NotoSansCJK-Regular.otf"),
+    );
 
     pdf.font("regular");
 
@@ -494,7 +517,8 @@ export async function POST(req: Request) {
           (el.fontSize ?? 40) * (el.fontScale ?? 1),
         );
 
-        const fontName = pickRegisteredFontName(el.fontFamily, el.fontWeight);
+        const fontName = pickSafePdfFont(el);
+
         const align = getPdfTextAlign(el.textAlign);
 
         pdf.font(fontName);

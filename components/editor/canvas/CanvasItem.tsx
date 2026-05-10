@@ -93,6 +93,7 @@ function CanvasItem({
 }) {
   const boxRef = useRef<HTMLDivElement | null>(null);
   const [isTextEditing, setIsTextEditing] = useState(false);
+  const wasSelectedOnPointerDownRef = useRef(false);
 
   useEffect(() => {
     if (!selected) setIsTextEditing(false);
@@ -163,8 +164,10 @@ function CanvasItem({
   }
 
   const fontSize = (element.fontSize ?? 40) * (element.fontScale ?? 1);
-  const finalColor = element.color ?? "#ffffff";
-  const diff = Math.abs(bgBrightness - getBrightness(finalColor));
+  const finalColor = element.color;
+  const diff = finalColor
+    ? Math.abs(bgBrightness - getBrightness(finalColor))
+    : 255;
 
   let shadowStrength = (element as any).shadowStrength ?? 0.7;
   if (element.role === "primary") shadowStrength = 0.85;
@@ -278,6 +281,7 @@ function CanvasItem({
       const otherX = getElementX(other);
       const otherY = getElementY(other);
       const otherW = getElementWidth(other);
+
       const otherH = getElementVisualHeight(other);
 
       const otherCenterX = otherX + otherW / 2;
@@ -297,6 +301,46 @@ function CanvasItem({
         snapped = true;
       }
     });
+    // BRAND LOGO SMART SNAP
+    if (!snapped && element.type === "logo") {
+      const logoSnap = SNAP_DISTANCE * 4;
+
+      const targetLeft = previewSafe;
+      const targetRight = docWidth - previewSafe - visualWidth;
+      const targetTop = previewSafe;
+      const targetBottom = docHeight - previewSafe - visualHeight;
+      const targetCenter = docWidth / 2 - visualWidth / 2;
+
+      if (Math.abs(snappedX - targetLeft) < logoSnap) {
+        snappedX = targetLeft;
+        verticalGuide = targetLeft;
+        snapped = true;
+      }
+
+      if (Math.abs(snappedX - targetRight) < logoSnap) {
+        snappedX = targetRight;
+        verticalGuide = docWidth - previewSafe;
+        snapped = true;
+      }
+
+      if (Math.abs(snappedX - targetCenter) < logoSnap) {
+        snappedX = targetCenter;
+        verticalGuide = docWidth / 2;
+        snapped = true;
+      }
+
+      if (Math.abs(snappedY - targetTop) < logoSnap) {
+        snappedY = targetTop;
+        horizontalGuide = targetTop;
+        snapped = true;
+      }
+
+      if (Math.abs(snappedY - targetBottom) < logoSnap) {
+        snappedY = targetBottom;
+        horizontalGuide = docHeight - previewSafe;
+        snapped = true;
+      }
+    }
     // 👉 ROLE-BASED SMART SNAP (soft, lock биш)
     if (!snapped && element.role === "primary") {
       if (Math.abs(centerX - docWidth / 2) < SNAP_DISTANCE_ROLE) {
@@ -357,11 +401,25 @@ function CanvasItem({
     if (element.name === "AI BG") return;
 
     e.stopPropagation();
+
+    wasSelectedOnPointerDownRef.current = selected;
+
+    if (!selected) {
+      setIsTextEditing(false);
+    }
+
     onSelect();
 
     const target = e.target as HTMLElement | null;
     if (target?.closest("button")) return;
     if (target?.closest("textarea")) return;
+
+    // ✅ Desktop дээр text дээр 1 дарахад зөвхөн select,
+    // ✅ 2 дарахад edit mode орно.
+    // ✅ Text зөөх бол дээрх жижиг move handle-оор зөөнө.
+    if (element.type === "text" && e.pointerType === "mouse") {
+      return;
+    }
 
     // ✅ MOBILE PINCH START
     if (e.pointerType === "touch" && element.type === "text") {
@@ -625,14 +683,25 @@ function CanvasItem({
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerCancel}
       onLostPointerCapture={handlePointerUp}
-      onDoubleClick={(e) => {
+      onClick={(e) => {
         if (element.type !== "text") return;
         e.stopPropagation();
+
+        // 1-р click: зөвхөн box select
+        if (!wasSelectedOnPointerDownRef.current) {
+          setIsTextEditing(false);
+          return;
+        }
+
+        // 2-р click: text бичих mode
         setIsTextEditing(true);
 
         requestAnimationFrame(() => {
           const textarea = boxRef.current?.querySelector("textarea");
-          textarea?.focus();
+
+          if (textarea instanceof HTMLTextAreaElement) {
+            textarea.focus();
+          }
         });
       }}
       className={`absolute touch-none ${
@@ -694,8 +763,8 @@ function CanvasItem({
           }}
           className="
 absolute
-top-0 right-0
-translate-x-1/2 -translate-y-1/2
+bottom-0 left-0
+-translate-x-1/2 translate-y-1/2
 z-30
 h-7 w-7
 flex items-center justify-center
@@ -719,7 +788,7 @@ hover:bg-red-50
         <TextItem
           element={{ ...element, isEditing: isTextEditing } as EditorElement}
           scale={scale}
-          color={finalColor}
+          color={finalColor as any}
           textShadow={dynamicShadow}
           onSelect={onSelect}
           onPatch={onPatch}

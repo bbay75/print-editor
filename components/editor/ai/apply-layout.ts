@@ -1,7 +1,7 @@
 import type { EditorElement } from "../core/editor-types";
 import type { LayoutType } from "./layout-engine";
 import { buildAiElements } from "./build-ai-elements";
-import { buildDesignerLayout } from "./designer-layout"; // 🔥 ЭНЭ НЭМ
+import { buildDesignerLayout } from "./designer-layout";
 
 type Params = {
   data: any;
@@ -13,34 +13,21 @@ type Params = {
   layoutType: LayoutType;
 };
 
-export function buildLayoutElements({
-  data,
-  widthMm,
-  heightMm,
-  previewCanvasWidth,
-  previewCanvasHeight,
-  previewSafe,
-  layoutType,
-}: Params): EditorElement[] {
-  // 1️⃣ AI raw
-  const ai = buildAiElements({
-    data,
-    widthMm,
-    heightMm,
-    previewCanvasWidth,
-    previewCanvasHeight,
-    previewSafe,
-    layoutType,
-  }) as EditorElement[];
+/**
+ * AI response -> clean canvas elements.
+ *
+ * Flow is intentionally only 2 steps:
+ * 1. buildAiElements: normalize raw AI JSON into rough EditorElement objects
+ * 2. buildDesignerLayout: final visual layout, spacing, font sizing, safe area
+ */
+export function buildLayoutElements(params: Params): EditorElement[] {
+  const rawElements = buildAiElements(params);
 
-  // 2️⃣ 🔥 DESIGNER FIX (хамгийн чухал)
-  const fixed = buildDesignerLayout({
-    elements: ai,
-    type: layoutType,
-    previewCanvasWidth,
-    previewCanvasHeight,
-    previewSafe,
+  return buildDesignerLayout({
+    elements: rawElements,
+    type: params.layoutType,
+    previewCanvasWidth: params.previewCanvasWidth,
+    previewCanvasHeight: params.previewCanvasHeight,
+    previewSafe: params.previewSafe,
   });
-
-  return fixed;
 }

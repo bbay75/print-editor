@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useLayoutEffect, useRef } from "react";
+import React, { useLayoutEffect, useRef, useState } from "react";
 import type { EditorElement } from "../core/editor-types";
 
 export default function TextItem({
@@ -16,7 +16,7 @@ export default function TextItem({
 }: {
   element: EditorElement;
   scale: number;
-  color: string;
+  color?: string;
   textShadow: string;
   onSelect: () => void;
   onPatch: (patch: Partial<EditorElement>) => void;
@@ -26,13 +26,26 @@ export default function TextItem({
 }) {
   const fontSize = (element.fontSize ?? 40) * (element.fontScale ?? 1);
   const lineHeight = Math.max(element.lineHeight ?? 1.2, 1);
+
+  const computedShadow =
+    element.role === "primary"
+      ? "0 2px 4px rgba(0,0,0,0.22), 0 8px 18px rgba(0,0,0,0.14)"
+      : element.role === "contact"
+        ? "0 1px 3px rgba(0,0,0,0.16), 0 4px 10px rgba(0,0,0,0.08)"
+        : "0 1px 3px rgba(0,0,0,0.18), 0 5px 12px rgba(0,0,0,0.10)";
+
+  const [textHeight, setTextHeight] = useState(0);
+
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
   useLayoutEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
 
-    el.style.height = "0px"; // 👈 хуучин өндөрийг хүчээр reset хийнэ
-    el.style.height = `${el.scrollHeight}px`;
+    el.style.height = "0px";
+    const nextHeight = el.scrollHeight;
+    el.style.height = `${nextHeight}px`;
+    setTextHeight(nextHeight);
   }, [
     element.text,
     fontSize,
@@ -63,7 +76,7 @@ export default function TextItem({
         onDragEnd();
       }}
       style={{
-        color,
+        color: color,
         opacity: element.opacity ?? 1,
         pointerEvents: (element as any).isEditing ? "auto" : "none",
         fontSize: `${fontSize * scale}px`,
@@ -72,7 +85,7 @@ export default function TextItem({
           element.fontFamily ?? "var(--font-inter), Inter, sans-serif",
         textAlign: element.textAlign ?? "left",
         lineHeight,
-        textShadow,
+        textShadow: computedShadow,
         background: "transparent",
         padding: 0,
         margin: 0,
@@ -83,8 +96,7 @@ export default function TextItem({
         wordBreak: "break-word",
         overflowWrap: "break-word",
         width: "100%",
-        height: "auto",
-        minHeight: `${fontSize * lineHeight * scale}px`,
+        height: textHeight > 0 ? `${textHeight}px` : "auto",
         overflow: "hidden",
         boxSizing: "border-box",
         display: "block",

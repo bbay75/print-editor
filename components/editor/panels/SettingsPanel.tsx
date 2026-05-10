@@ -51,7 +51,25 @@ export default function SettingsPanel({
   onToggleBold: () => void;
   onFontSizeChange: (value: number) => void;
 }) {
-  const [settingsPos, setSettingsPos] = useState({ x: 980, y: 220 });
+  const [settingsPos, setSettingsPos] = useState(() => {
+    if (typeof window === "undefined") return { x: 980, y: 220 };
+
+    const saved = localStorage.getItem("editor_settings_panel_pos");
+
+    if (saved) {
+      try {
+        const pos = JSON.parse(saved);
+        return {
+          x: typeof pos.x === "number" ? pos.x : 980,
+          y: typeof pos.y === "number" ? pos.y : 220,
+        };
+      } catch {
+        return { x: 980, y: 220 };
+      }
+    }
+
+    return { x: 980, y: 220 };
+  });
   const [activeTab, setActiveTab] = useState<TabType>("none");
 
   const dragRef = useRef<{
@@ -59,6 +77,8 @@ export default function SettingsPanel({
     startY: number;
     baseX: number;
     baseY: number;
+    lastX: number;
+    lastY: number;
   } | null>(null);
 
   const startDrag = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -70,6 +90,8 @@ export default function SettingsPanel({
       startY: e.clientY,
       baseX: settingsPos.x,
       baseY: settingsPos.y,
+      lastX: settingsPos.x,
+      lastY: settingsPos.y,
     };
 
     e.currentTarget.setPointerCapture?.(e.pointerId);
@@ -78,16 +100,47 @@ export default function SettingsPanel({
   const moveDrag = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!dragRef.current) return;
 
-    setSettingsPos({
-      x: dragRef.current.baseX + (e.clientX - dragRef.current.startX),
-      y: dragRef.current.baseY + (e.clientY - dragRef.current.startY),
-    });
+    const panelWidth = 300;
+    const panelHeight = 400; // ойролцоогоор
+
+    const nextPos = {
+      x: Math.min(
+        window.innerWidth - panelWidth,
+        Math.max(
+          0,
+          dragRef.current.baseX + (e.clientX - dragRef.current.startX),
+        ),
+      ),
+      y: Math.min(
+        window.innerHeight - panelHeight,
+        Math.max(
+          0,
+          dragRef.current.baseY + (e.clientY - dragRef.current.startY),
+        ),
+      ),
+    };
+
+    dragRef.current.lastX = nextPos.x;
+    dragRef.current.lastY = nextPos.y;
+
+    setSettingsPos(nextPos);
   };
 
   const endDrag = () => {
+    const last = dragRef.current;
+
+    if (last) {
+      localStorage.setItem(
+        "editor_settings_panel_pos",
+        JSON.stringify({
+          x: last.lastX,
+          y: last.lastY,
+        }),
+      );
+    }
+
     dragRef.current = null;
   };
-
   const toggleTab = (tab: TabType) => {
     setActiveTab((prev) => (prev === tab ? "none" : tab));
   };
