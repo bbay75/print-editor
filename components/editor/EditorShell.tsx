@@ -38,7 +38,6 @@ import {
   Printer,
   ImagePlus,
   Info,
-  PanelTopClose,
 } from "lucide-react";
 function getSafeAreaFitMaxFontSize({
   text,
@@ -553,10 +552,8 @@ export default function EditorShell() {
       setAiTips(Array.isArray(data.tips) ? data.tips : []);
       const nextLayoutType =
         data.layoutType === "center" ||
-        data.layoutType === "top-heavy" ||
         data.layoutType === "hero" ||
-        data.layoutType === "split" ||
-        data.layoutType === "split-balanced"
+        data.layoutType === "split"
           ? data.layoutType
           : layoutType;
 
