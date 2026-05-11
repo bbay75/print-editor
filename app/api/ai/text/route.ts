@@ -32,181 +32,105 @@ function looksLikePhone(text: string) {
   return /(\+?\d[\d\s-]{5,})/.test(text);
 }
 
-type LayoutType = "center" | "top-heavy" | "hero" | "split" | "split-balanced";
+type LayoutType = "hero" | "split" | "center";
 
 function normalizeLayoutType(value: any): LayoutType {
-  if (
-    value === "center" ||
-    value === "top-heavy" ||
-    value === "hero" ||
-    value === "split" ||
-    value === "split-balanced"
-  ) {
+  if (value === "hero" || value === "split" || value === "center") {
     return value;
   }
 
-  return "center";
+  return "hero";
 }
-
 function buildLayoutGuide(layoutType: LayoutType) {
   const common = `
-This is a typography-aware advertising background.
+You are creating ONLY the background image for an editable print poster.
 
-IMPORTANT:
-Editable text will be placed later by the editor.
-The background image itself must reserve a protected typography zone.
+CRITICAL:
+Text will be added later by code.
+The background must be composed around a protected typography zone.
 
-Do NOT put the main subject inside the protected typography zone.
-Do NOT put people, faces, bodies, cars, products, buildings, characters, food, strong highlights, or high-detail objects inside the typography zone.
-
-The protected typography zone must contain only:
-soft gradient, atmosphere, wall, sky, blur, shadow, smoke, clean surface, smooth texture, low-detail background, or negative space.
-
-No text, no letters, no logos, no signs, no watermark, no UI.
-Do not make empty boxes or panels.
-Make it look like a real premium advertising poster composition.
+GLOBAL RULES:
+- No text, no letters, no logo, no watermark, no signs, no UI.
+- Full bleed, edge to edge, print-ready.
+- The main subject must be visually separated from the typography zone.
+- The typography zone must be calm, readable, low-detail, and high-contrast.
+- Do not place faces, bodies, products, cars, buildings, characters, food, hands, sharp edges, bright highlights, or high-detail patterns inside typography zones.
+- The typography zone may contain only soft light, sky, wall, atmosphere, shadow, blur, gradient, smoke, clean surface, or smooth low-detail texture.
+- Do not create fake white boxes, cards, rectangles, empty panels, or placeholder frames.
+- The composition should feel designed, premium, intentional, and ready for editable text overlay.
 `;
 
   if (layoutType === "hero") {
     return `
 ${common}
 
-Protected typography column:
-- left 42% width of the composition
-- from upper-middle down to bottom-left
+LAYOUT CONTRACT: HERO
 
-This entire typography column must remain readable for:
-- headline
-- supporting text
-- CTA/contact text
+TYPOGRAPHY ZONE:
+- Left 42% of the image.
+- From 28% height down to 82% height.
+- This full left column is reserved for headline, support text, CTA, and contact.
 
-Do NOT place:
-- people
-- body parts
-- faces
-- products
-- strong highlights
-- sharp edges
-inside this typography column.
+SUBJECT ZONE:
+- Main subject must be on the right 50% of the image.
+- Subject may be large and cinematic, but must not enter the left typography column.
+- If people or characters appear, their faces and bodies must stay right of center.
 
-Main subject zone:
-RIGHT side or center-right.
-
-Composition:
-Create a cinematic advertising composition.
-Keep the strongest subject clearly separated from the typography column.
-Use subtle cinematic shadow or atmospheric depth behind typography areas.
-Keep readability natural and premium.
-Do not create obvious blur cards or fake UI panels.
+BACKGROUND FEEL:
+- Cinematic commercial poster.
+- Strong subject on right.
+- Clean readable negative space on left.
+- Natural shadow or gradient behind typography area.
 `;
   }
 
   if (layoutType === "split") {
     return `
 ${common}
-Protected typography zone:
-Primarily left-side readable space for headline and supporting text.
 
-The typography area should feel naturally readable,
-not artificially empty.
+LAYOUT CONTRACT: SPLIT
 
-Allow atmospheric overlap, depth, soft gradients, light falloff,
-or partial environmental continuation.
+TYPOGRAPHY ZONE:
+- Left 44% of the image.
+- x: 7% to 46% width.
+- y: 18% to 82% height.
+- This full left column is reserved for headline, details, CTA, and contact.
 
-Do NOT place the main focal subject directly behind typography.
+SUBJECT ZONE:
+- Main subject must be on the right 50% of the image.
+- Subject can be large and detailed on the right.
+- It must not cross into the left typography column.
+- If people, children, products, cars, buildings, or characters appear, place them on the right side.
 
-The visual subject may naturally extend slightly toward the typography side,
-as long as readability remains strong.
-
-Avoid hard left/right separation.
-Create a premium natural advertising composition.
-
-This area is reserved for:
-- headline
-- supporting text
-- details
-- CTA
-
-Keep this entire column readable and low-detail.
-Use subtle atmospheric gradient or soft lighting transition behind typography areas.
-The readability support should feel natural and cinematic, not like a fake overlay panel.
-Avoid harsh blur boxes or obvious rectangles.
-`;
-  }
-
-  if (layoutType === "center") {
-    return `
-${common}
-Protected typography zone:
-CENTER area.
-
-Main subject zone:
-Edges, corners, bottom area, or soft background depth.
-
-Composition:
-Keep the center calm and readable.
-Do not place main subject, face, product, or high-detail objects in the center.
-`;
-  }
-
-  if (layoutType === "top-heavy") {
-    return `
-${common}
-Protected typography area:
-- upper-left to center-left flow area
-- approximately 40-45% of the composition width
-- from top area down toward middle
-
-This FULL typography flow area must remain readable for:
-- headline
-- supporting text
-- CTA
-- details
-
-Do NOT place:
-- buildings
-- windows
-- faces
-- people
-- products
-- strong edges
-- high-detail architecture
-directly behind this typography flow area.
-
-Allow only:
-- atmosphere
-- soft gradients
-- blur
-- depth
-- soft shadows
-- low-detail surfaces
-behind the typography flow area.
-
-The visual subject should stay mostly outside this typography flow area.
-
-Keep the full top band readable for:
-- headline
-- supporting text
-- CTA
-
-Avoid placing large objects or high-detail elements in this top band.
+BACKGROUND FEEL:
+- Natural premium left/right advertising composition.
+- Not a harsh split screen.
+- Soft lighting transition between text area and subject area.
 `;
   }
 
   return `
 ${common}
-Protected typography zone:
-TOP-CENTER for headline, plus LEFT and RIGHT detail zones below.
 
-Main subject zone:
-Background depth, bottom area, or edges.
+LAYOUT CONTRACT: CENTER
 
-Composition:
-Keep top headline area and side detail areas calm and readable.
-Do not place focal objects directly behind those zones.
+TYPOGRAPHY ZONE:
+- Center readable block.
+- x: 18% to 82% width.
+- y: 24% to 62% height.
+- This central area is reserved for headline and supporting text.
+
+SUBJECT ZONE:
+- Main subject must stay around edges, lower area, corners, or background depth.
+- Do not place faces, bodies, products, characters, buildings, cars, or strong details in the central typography zone.
+- Center must remain calm and readable.
+
+BACKGROUND FEEL:
+- Balanced central advertising composition.
+- Soft depth around center.
+- Main visuals support the center, not cover it.
 `;
 }
-
 export async function POST(req: Request) {
   try {
     const { prompt, widthMm, heightMm } = await req.json();
@@ -302,38 +226,34 @@ COLOR RULE:
 
 LAYOUT TYPES:
 - hero
-- center
-- top-heavy
 - split
-- split-balanced
+- center
 
 LAYOUT DECISION:
-- Choose exactly ONE layoutType.
-- Do not choose randomly.
+- Choose exactly ONE layoutType: hero, split, or center.
 - Choose the layout that best fits the visual composition naturally.
 - Do not choose layout by business category alone.
-- If the background concept includes people, faces, family, portrait, model, athlete, child, or character, avoid center layout.
-- For people/family/face backgrounds, prefer hero, split, or top-heavy with typography placed away from faces and bodies.
-- Never choose center layout when the center contains faces or people.
 
-Choose layout based on:
-- composition balance
-- visual hierarchy
-- subject placement
-- readability
-- cinematic feel
-- negative space
-- typography flow
-- amount of text
+hero:
+- Best for cinematic ads.
+- Text group on left side.
+- Main subject on right side or background depth.
+
+split:
+- Best for commercial ads with clear subject separation.
+- Full text group on left.
+- Main subject on right.
+- Not a harsh 50/50 template.
+
+center:
+- Best for symmetrical, premium, minimal, announcement, or calm designs.
+- Text group in center.
+- Main subject must stay around edges, background depth, bottom, or corners.
 
 Important:
+- The ENTIRE text group must be protected, not only the headline.
+- Never place people, faces, products, buildings, cars, characters, or focal objects behind the text group.
 - Different prompts should naturally produce different layouts.
-- Avoid repeatedly choosing the same layout.
-- Do not default to top-heavy.
-- Do not default to split.
-- Use top-heavy only when the visual subject naturally leaves readable upper-side space.
-- Use split only when the composition naturally supports left/right separation.
-- If the scene has strong centered symmetry, centered depth, vanishing-point composition, or cinematic central focus, prefer center layout.
 
 BACKGROUND RULE:
 - Background must be printable and full bleed.
@@ -559,7 +479,7 @@ Print-ready.
 
         prompt: backgroundPrompt,
 
-        size: "1024x1024",
+        size: isLandscape ? "1536x1024" : "1024x1536",
       });
 
       const imageBase64 = imageRes?.data?.[0]?.b64_json;

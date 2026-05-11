@@ -59,29 +59,18 @@ function getRoleFontRatio(
       return isPortrait ? 0.108 : isSquare ? 0.104 : 0.102;
     }
 
-    if (type === "top-heavy") {
-      return isPortrait ? 0.122 : isSquare ? 0.118 : 0.115;
-    }
-
     if (type === "hero") {
       return isPortrait ? 0.118 : isSquare ? 0.112 : 0.108;
     }
-
-    if (type === "split-balanced") {
-      return isPortrait ? 0.105 : isSquare ? 0.1 : 0.098;
-    }
-
     return isPortrait ? 0.112 : isSquare ? 0.108 : 0.104;
   }
 
   if (role === "secondary") {
     if (type === "split") return 0.075;
-    if (type === "split-balanced") return 0.065;
     return isPortrait ? 0.07 : 0.068;
   }
 
   if (role === "support") {
-    if (type === "split-balanced") return 0.058;
     return isPortrait ? 0.06 : 0.058;
   }
 
@@ -110,16 +99,6 @@ function getFrame({
       x: safeLeft + (safeWidth - width) / 2,
       width,
       align: "center" as const,
-    };
-  }
-
-  if (type === "top-heavy") {
-    const width = role === "primary" ? safeWidth * 0.62 : safeWidth * 0.56;
-
-    return {
-      x: safeLeft + safeWidth * 0.06,
-      width,
-      align: "left" as const,
     };
   }
 
@@ -155,39 +134,6 @@ function getFrame({
     return {
       x: safeLeft + safeWidth * 0.56,
       width: safeWidth * 0.36,
-      align: "left" as const,
-    };
-  }
-
-  if (type === "split-balanced") {
-    if (role === "primary") {
-      const width = safeWidth * 0.72;
-
-      return {
-        x: safeLeft + (safeWidth - width) / 2,
-        width,
-        align: "center" as const,
-      };
-    }
-
-    if (role === "contact") {
-      const width = safeWidth * 0.58;
-
-      return {
-        x: safeLeft + (safeWidth - width) / 2,
-        width,
-        align: "center" as const,
-      };
-    }
-
-    const width = isPortrait ? safeWidth * 0.68 : safeWidth * 0.38;
-
-    return {
-      x:
-        role === "secondary"
-          ? safeLeft + safeWidth * 0.06
-          : safeLeft + safeWidth * 0.56,
-      width,
       align: "left" as const,
     };
   }
@@ -298,13 +244,10 @@ function placeStack(items: EditorElement[], startY: number, gap: number) {
   });
 }
 
-function applyBackgroundMatch(next: EditorElement[], type: LayoutType) {
+function applyBackgroundMatch(next: EditorElement[]) {
   const bg = next.find((el) => el.name === "AI BG");
   if (!bg) return;
 
-  // AI background should stay visually intact.
-  // Layout dropdown must reposition editable text only,
-  // not weaken or fade the generated background.
   bg.opacity = 1;
 }
 
@@ -334,7 +277,7 @@ export function buildDesignerLayout({
   const orientation = getOrientation(previewCanvasWidth, previewCanvasHeight);
   const base = Math.min(safeWidth, safeHeight);
 
-  applyBackgroundMatch(next, type);
+  applyBackgroundMatch(next);
 
   const textEls = next
     .filter((el) => el.type === "text")
@@ -377,19 +320,6 @@ export function buildDesignerLayout({
 
     const total = stackHeight(textEls, gap);
     placeStack(textEls, safeTop + (safeHeight - total) / 2, gap);
-  }
-
-  if (type === "top-heavy") {
-    const gap = rescaleStackToFit({
-      items: textEls,
-      maxHeight: safeHeight * 0.72,
-      base,
-      gapRatio: 0.035,
-      previewCanvasWidth,
-      previewCanvasHeight,
-    });
-
-    placeStack(textEls, safeTop + safeHeight * 0.09, gap);
   }
 
   if (type === "hero") {
@@ -450,70 +380,6 @@ export function buildDesignerLayout({
       placeStack(left, safeTop + (safeHeight - leftTotal) / 2, leftGap);
       placeStack(right, safeTop + (safeHeight - rightTotal) / 2, rightGap);
     }
-  }
-
-  if (type === "split-balanced") {
-    const primary = textEls.find((el) => getTextRole(el) === "primary");
-    const others = textEls.filter((el) => getTextRole(el) !== "primary");
-
-    if (primary) {
-      applyTextStyle({
-        el: primary,
-        fontSize: base * getRoleFontRatio("primary", orientation, type),
-        width: safeWidth * 0.62,
-        align: "center",
-        previewCanvasWidth,
-        previewCanvasHeight,
-      });
-
-      primary.x = safeLeft + (safeWidth - primary.width) / 2;
-      primary.y = safeTop + safeHeight * 0.12;
-    }
-
-    const left = others.filter((_, index) => index % 2 === 0);
-    const right = others.filter((_, index) => index % 2 === 1);
-
-    left.forEach((el) => {
-      applyTextStyle({
-        el,
-        fontSize: base * getRoleFontRatio(getTextRole(el), orientation, type),
-        width: safeWidth * 0.32,
-        align: "left",
-        previewCanvasWidth,
-        previewCanvasHeight,
-      });
-
-      el.x = safeLeft + safeWidth * 0.16;
-    });
-
-    right.forEach((el) => {
-      applyTextStyle({
-        el,
-        fontSize: base * getRoleFontRatio(getTextRole(el), orientation, type),
-        width: safeWidth * 0.32,
-        align: "left",
-        previewCanvasWidth,
-        previewCanvasHeight,
-      });
-
-      el.x = safeLeft + safeWidth * 0.58;
-    });
-
-    const gap = base * 0.035;
-    const topOfColumns =
-      primary != null
-        ? primary.y + primary.height + safeHeight * 0.12
-        : safeTop + safeHeight * 0.42;
-
-    const leftTotal = stackHeight(left, gap);
-    const rightTotal = stackHeight(right, gap);
-
-    placeStack(left, topOfColumns, gap);
-    placeStack(
-      right,
-      topOfColumns + Math.max(0, (leftTotal - rightTotal) / 2),
-      gap,
-    );
   }
 
   textEls.forEach((el) => {

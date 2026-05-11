@@ -156,11 +156,9 @@ function clampTextElementIntoCanvas(
 
 export default function EditorShell() {
   const layoutLabelMap = {
-    center: "Center",
-    "top-heavy": "Top Heavy",
     hero: "Hero",
     split: "Split",
-    "split-balanced": "Split Balanced",
+    center: "Center",
   };
 
   const [doc, setDoc] = useState<{
@@ -1363,17 +1361,6 @@ Coffee * Dessert * Brunch.
                         >
                           Center
                         </button>
-
-                        <button
-                          onClick={() => {
-                            applyLayout("top-heavy");
-                            setLayoutMenuOpen(false);
-                          }}
-                          className="w-full rounded-xl px-3 py-2 text-left text-sm hover:bg-slate-100"
-                        >
-                          Top Heavy
-                        </button>
-
                         <button
                           onClick={() => {
                             applyLayout("hero");
@@ -1383,7 +1370,6 @@ Coffee * Dessert * Brunch.
                         >
                           Hero
                         </button>
-
                         <button
                           onClick={() => {
                             applyLayout("split");
@@ -1392,16 +1378,6 @@ Coffee * Dessert * Brunch.
                           className="w-full rounded-xl px-3 py-2 text-left text-sm hover:bg-slate-100"
                         >
                           Split
-                        </button>
-
-                        <button
-                          onClick={() => {
-                            applyLayout("split-balanced");
-                            setLayoutMenuOpen(false);
-                          }}
-                          className="w-full rounded-xl px-3 py-2 text-left text-sm hover:bg-slate-100"
-                        >
-                          Split Balanced
                         </button>
                       </div>
                     )}

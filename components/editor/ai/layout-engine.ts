@@ -11,50 +11,26 @@ export type LayoutPosition =
   | "bottom-center"
   | "bottom-right";
 
-export type LayoutType =
-  | "center"
-  | "top-heavy"
-  | "hero"
-  | "split"
-  | "split-balanced";
+export type LayoutType = "hero" | "split" | "center";
 
 export function getLayoutPosition(
   role: TextRole,
   layoutType: LayoutType,
 ): LayoutPosition {
-  if (layoutType === "center") {
-    if (role === "primary") return "center";
-    if (role === "secondary") return "bottom-center";
-    if (role === "support") return "top-center";
-    if (role === "contact") return "bottom-center";
-  }
-
-  if (layoutType === "top-heavy") {
-    if (role === "primary") return "top-left";
-    if (role === "secondary") return "center-left";
-    if (role === "support") return "center-left";
-    if (role === "contact") return "bottom-left";
-  }
-
   if (layoutType === "hero") {
-    if (role === "primary") return "bottom-left";
-    if (role === "secondary") return "bottom-left";
-    if (role === "support") return "bottom-left";
-    if (role === "contact") return "top-left";
+    if (role === "contact") return "bottom-left";
+    return "center-left";
   }
 
   if (layoutType === "split") {
-    if (role === "primary") return "center-left";
-    if (role === "secondary") return "center-right";
-    if (role === "support") return "center-right";
     if (role === "contact") return "bottom-left";
+    return "center-left";
   }
 
-  if (layoutType === "split-balanced") {
-    if (role === "primary") return "top-center";
-    if (role === "secondary") return "center-left";
-    if (role === "support") return "center-right";
+  if (layoutType === "center") {
+    if (role === "primary") return "center";
     if (role === "contact") return "bottom-center";
+    return "center";
   }
 
   return "center";
