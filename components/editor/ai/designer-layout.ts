@@ -55,26 +55,28 @@ function getRoleFontRatio(
   const isSquare = orientation === "square";
 
   if (role === "primary") {
-    if (type === "center") {
-      return isPortrait ? 0.108 : isSquare ? 0.104 : 0.102;
-    }
-
-    if (type === "hero") {
-      return isPortrait ? 0.118 : isSquare ? 0.112 : 0.108;
-    }
-    return isPortrait ? 0.112 : isSquare ? 0.108 : 0.104;
+    if (type === "hero") return isPortrait ? 0.13 : isSquare ? 0.122 : 0.115;
+    if (type === "split") return isPortrait ? 0.098 : isSquare ? 0.095 : 0.088;
+    if (type === "center") return isPortrait ? 0.115 : isSquare ? 0.108 : 0.102;
+    return 0.105;
   }
 
   if (role === "secondary") {
-    if (type === "split") return 0.075;
-    return isPortrait ? 0.07 : 0.068;
+    if (type === "hero") return isPortrait ? 0.066 : 0.058;
+    if (type === "split") return isPortrait ? 0.06 : 0.052;
+    if (type === "center") return isPortrait ? 0.068 : 0.06;
+    return 0.058;
   }
 
   if (role === "support") {
-    return isPortrait ? 0.06 : 0.058;
+    if (type === "hero") return isPortrait ? 0.052 : 0.046;
+    if (type === "split") return isPortrait ? 0.052 : 0.046;
+    if (type === "center") return isPortrait ? 0.056 : 0.05;
+    return 0.048;
   }
 
-  return isPortrait ? 0.052 : 0.048;
+  if (type === "split") return isPortrait ? 0.046 : 0.04;
+  return isPortrait ? 0.048 : 0.043;
 }
 
 function getFrame({
@@ -103,7 +105,7 @@ function getFrame({
   }
 
   if (type === "hero") {
-    const width = isPortrait ? safeWidth * 0.64 : safeWidth * 0.46;
+    const width = isPortrait ? safeWidth * 0.66 : safeWidth * 0.42;
 
     return {
       x: safeLeft + safeWidth * 0.07,
@@ -113,27 +115,11 @@ function getFrame({
   }
 
   if (type === "split") {
-    if (isPortrait) {
-      const width = role === "primary" ? safeWidth * 0.78 : safeWidth * 0.68;
-
-      return {
-        x: safeLeft + (safeWidth - width) / 2,
-        width,
-        align: role === "primary" ? ("left" as const) : ("center" as const),
-      };
-    }
-
-    if (role === "primary") {
-      return {
-        x: safeLeft + safeWidth * 0.04,
-        width: safeWidth * 0.42,
-        align: "left" as const,
-      };
-    }
+    const width = isPortrait ? safeWidth * 0.74 : safeWidth * 0.43;
 
     return {
-      x: safeLeft + safeWidth * 0.56,
-      width: safeWidth * 0.36,
+      x: safeLeft + safeWidth * 0.07,
+      width,
       align: "left" as const,
     };
   }
@@ -325,61 +311,34 @@ export function buildDesignerLayout({
   if (type === "hero") {
     const gap = rescaleStackToFit({
       items: textEls,
-      maxHeight: safeHeight * 0.46,
+      maxHeight: safeHeight * 0.48,
       base,
-      gapRatio: 0.024,
+      gapRatio: 0.03,
       previewCanvasWidth,
       previewCanvasHeight,
     });
 
     const total = stackHeight(textEls, gap);
-    const startY = safeTop + safeHeight * 0.46;
-    const maxStartY = safeBottom - total - base * 0.04;
+    const startY = safeTop + safeHeight * 0.38;
+    const maxStartY = safeBottom - total - base * 0.05;
 
     placeStack(textEls, Math.min(startY, maxStartY), gap);
   }
 
   if (type === "split") {
-    if (orientation === "portrait") {
-      const gap = rescaleStackToFit({
-        items: textEls,
-        maxHeight: safeHeight * 0.68,
-        base,
-        gapRatio: 0.03,
-        previewCanvasWidth,
-        previewCanvasHeight,
-      });
+    const gap = rescaleStackToFit({
+      items: textEls,
+      maxHeight: safeHeight * 0.62,
+      base,
+      gapRatio: 0.038,
+      previewCanvasWidth,
+      previewCanvasHeight,
+    });
 
-      const total = stackHeight(textEls, gap);
-      placeStack(textEls, safeTop + (safeHeight - total) / 2, gap);
-    } else {
-      const left = textEls.filter((el) => getTextRole(el) === "primary");
-      const right = textEls.filter((el) => getTextRole(el) !== "primary");
+    const total = stackHeight(textEls, gap);
+    const startY = safeTop + (safeHeight - total) / 2;
 
-      const leftGap = rescaleStackToFit({
-        items: left,
-        maxHeight: safeHeight * 0.56,
-        base,
-        gapRatio: 0.025,
-        previewCanvasWidth,
-        previewCanvasHeight,
-      });
-
-      const rightGap = rescaleStackToFit({
-        items: right,
-        maxHeight: safeHeight * 0.52,
-        base,
-        gapRatio: 0.03,
-        previewCanvasWidth,
-        previewCanvasHeight,
-      });
-
-      const leftTotal = stackHeight(left, leftGap);
-      const rightTotal = stackHeight(right, rightGap);
-
-      placeStack(left, safeTop + (safeHeight - leftTotal) / 2, leftGap);
-      placeStack(right, safeTop + (safeHeight - rightTotal) / 2, rightGap);
-    }
+    placeStack(textEls, startY, gap);
   }
 
   textEls.forEach((el) => {
