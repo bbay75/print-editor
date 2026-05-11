@@ -173,18 +173,6 @@ export default function AdminPage() {
     fetchUsers();
     fetchAnalytics();
   };
-  const resetCredit = async (phone: string) => {
-    await fetch("/api/admin/reset-credit", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ phone }),
-    });
-
-    await fetchUsers();
-    fetchAnalytics();
-  };
 
   const deleteUser = async (phone: string) => {
     if (!confirm("Энэ хэрэглэгчийг устгах уу?")) return;
@@ -561,13 +549,6 @@ export default function AdminPage() {
                           className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white"
                         >
                           Хязгааргүй
-                        </button>
-
-                        <button
-                          onClick={() => resetCredit(u.phone)}
-                          className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white"
-                        >
-                          Тэглэх
                         </button>
 
                         <button
